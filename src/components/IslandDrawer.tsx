@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, Compass, ArrowLeft, Share2 } from 'lucide-react';
+import { X, Compass, ArrowLeft, Share2, BookOpen } from 'lucide-react';
 import { getMedia } from '../storage/mediaDb';
 import { Island, MuseumPiece, MuseumThemeConfig, Room } from '../types/museum';
 
@@ -12,6 +12,7 @@ interface IslandDrawerProps {
   onSelectRoom: (roomId: string | null) => void;
   onOpenPiece: (piece: MuseumPiece) => void;
   onEnter2DMode: (islandId: string, roomId: string) => void;
+  onOpenGuestbook?: (island: Island, room: Room | null) => void;
   onClose: () => void;
 }
 
@@ -62,6 +63,7 @@ export const IslandDrawer: React.FC<IslandDrawerProps> = ({
   onSelectRoom,
   onOpenPiece,
   onEnter2DMode,
+  onOpenGuestbook,
   onClose,
 }) => {
   if (!island) return null;
@@ -108,17 +110,30 @@ export const IslandDrawer: React.FC<IslandDrawerProps> = ({
           <X className="h-4 w-4" />
         </button>
 
-        {rooms.length > 0 && (
-          <button
-            type="button"
-            onClick={() => onEnter2DMode(island.id, (activeRoom || rooms[0]).id)}
-            style={{ borderColor: accentColor }}
-            className="font-pixel mt-3.5 flex w-full items-center justify-center gap-2 border-2 bg-[#1d6873] px-3 py-2.5 text-[9px] text-[#fff9e8] transition-colors hover:bg-[#b25f37]"
-          >
-            <Compass className="h-3.5 w-3.5 shrink-0" />
-            <span>EXPLORAR SALA EN 2D</span>
-          </button>
-        )}
+        <div className="mt-3.5 flex flex-wrap gap-2">
+          {rooms.length > 0 && (
+            <button
+              type="button"
+              onClick={() => onEnter2DMode(island.id, (activeRoom || rooms[0]).id)}
+              style={{ borderColor: accentColor }}
+              className="font-pixel flex flex-1 items-center justify-center gap-2 border-2 bg-[#1d6873] px-3 py-2.5 text-[9px] text-[#fff9e8] transition-colors hover:bg-[#b25f37]"
+            >
+              <Compass className="h-3.5 w-3.5 shrink-0" />
+              <span>EXPLORAR 2D</span>
+            </button>
+          )}
+          {onOpenGuestbook && (
+            <button
+              type="button"
+              onClick={() => onOpenGuestbook(island, activeRoom)}
+              className="font-pixel inline-flex items-center justify-center gap-1.5 border-2 border-white/55 bg-[#0a3646] px-3 py-2.5 text-[9px] text-[#fff9e8] transition-colors hover:bg-[#175566]"
+              title="Abrir libro de visitas de esta sala o isla"
+            >
+              <BookOpen className="h-3.5 w-3.5 shrink-0" style={{ color: accentColor }} />
+              <span>VISITAS</span>
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="museum-scroll flex-1 overflow-y-auto px-3 py-2.5">
@@ -157,42 +172,64 @@ export const IslandDrawer: React.FC<IslandDrawerProps> = ({
             Esta sala está vacía. Puedes cargar textos, imágenes, audio, vídeo o enlaces desde «Editar museo».
           </p>
         ) : (
-          activePieces.map((item, index) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onOpenPiece(item)}
-              className="my-1 flex w-full items-center gap-3 border border-[#e0d7a5]/20 bg-white/[0.045] px-3 py-2.5 text-left transition-colors hover:border-[#e3cc7d] hover:bg-[#82c29b]/15"
-            >
-              {item.mediaDataUrl || item.mediaKey ? (
-                <PieceThumbnail mediaKey={item.mediaKey} mediaDataUrl={item.mediaDataUrl} />
-              ) : (
-                <span
-                  style={{ backgroundColor: accentColor }}
-                  className="font-pixel flex h-7 w-7 shrink-0 items-center justify-center text-[10px] font-bold text-[#1b3540] tabular-nums"
-                >
-                  {String(index + 1).padStart(2, '0')}
-                </span>
-              )}
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-base font-semibold leading-tight text-[#f8f3df]">
-                  {item.title}
-                </span>
-                <span className="mt-1 block truncate text-xs text-[#a7c5bc]">
-                  {item.subtitle || 'Abrir pieza'}
-                </span>
-                {item.curatedFrom && (
+          activePieces.map((item, index) => {
+            const sale = item.saleStatus && item.saleStatus !== 'not_for_sale' ? item.saleStatus : null;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onOpenPiece(item)}
+                className="my-1 flex w-full items-center gap-3 border border-[#e0d7a5]/20 bg-white/[0.045] px-3 py-2.5 text-left transition-colors hover:border-[#e3cc7d] hover:bg-[#82c29b]/15"
+              >
+                {item.mediaDataUrl || item.mediaKey ? (
+                  <PieceThumbnail mediaKey={item.mediaKey} mediaDataUrl={item.mediaDataUrl} />
+                ) : (
                   <span
-                    className="mt-1 inline-flex items-center gap-1 text-[11px]"
-                    style={{ color: accentColor }}
+                    style={{ backgroundColor: accentColor }}
+                    className="font-pixel flex h-7 w-7 shrink-0 items-center justify-center text-[10px] font-bold text-[#1b3540] tabular-nums"
                   >
-                    <Share2 className="h-3 w-3 shrink-0" />
-                    <span className="truncate">De «{item.curatedFrom.sourceMuseumTitle}»</span>
+                    {String(index + 1).padStart(2, '0')}
                   </span>
                 )}
-              </span>
-            </button>
-          ))
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="truncate text-base font-semibold leading-tight text-[#f8f3df]">
+                      {item.title}
+                    </span>
+                    {sale && (
+                      <span
+                        className={`shrink-0 border px-1.5 py-0.5 text-[10px] font-bold uppercase tabular-nums ${
+                          sale === 'for_sale'
+                            ? 'border-[#75e4dc]/60 bg-[#124e59] text-[#a5f5ee]'
+                            : sale === 'reserved'
+                              ? 'border-[#f4d47d]/60 bg-[#4b3e1b] text-[#f8e196]'
+                              : 'border-[#e08b79]/60 bg-[#522721] text-[#ffd4cb]'
+                        }`}
+                      >
+                        {sale === 'for_sale'
+                          ? item.priceLabel || 'En venta'
+                          : sale === 'reserved'
+                            ? 'Reservada'
+                            : 'Vendida'}
+                      </span>
+                    )}
+                  </span>
+                  <span className="mt-1 block truncate text-xs text-[#a7c5bc]">
+                    {item.subtitle || 'Abrir pieza'}
+                  </span>
+                  {item.curatedFrom && (
+                    <span
+                      className="mt-1 inline-flex items-center gap-1 text-[11px]"
+                      style={{ color: accentColor }}
+                    >
+                      <Share2 className="h-3 w-3 shrink-0" />
+                      <span className="truncate">De «{item.curatedFrom.sourceMuseumTitle}»</span>
+                    </span>
+                  )}
+                </span>
+              </button>
+            );
+          })
         )}
       </div>
 

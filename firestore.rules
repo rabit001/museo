@@ -32,6 +32,10 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
+    function isFlagshipAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'sarvideleonardo@gmail.com';
+    }
+
     // 3. Entity Validators
     function isValidCategory(category) {
       return category is string &&
@@ -46,13 +50,28 @@ service cloud.firestore {
     function isValidTheme(theme) {
       return theme is map &&
         theme.keys().hasAll(['presetId', 'skyColor', 'oceanColor', 'accentColor', 'surfaceColor', 'roomThemeId']) &&
-        theme.keys().hasOnly(['presetId', 'skyColor', 'oceanColor', 'accentColor', 'surfaceColor', 'roomThemeId']) &&
+        theme.keys().hasOnly([
+          'presetId', 'skyColor', 'oceanColor', 'accentColor', 'surfaceColor',
+          'roomThemeId', 'islandStyle', 'frameStyle'
+        ]) &&
         theme.presetId is string && theme.presetId.size() >= 1 && theme.presetId.size() <= 32 &&
         theme.skyColor is string && theme.skyColor.size() >= 4 && theme.skyColor.size() <= 16 &&
         theme.oceanColor is string && theme.oceanColor.size() >= 4 && theme.oceanColor.size() <= 16 &&
         theme.accentColor is string && theme.accentColor.size() >= 4 && theme.accentColor.size() <= 16 &&
         theme.surfaceColor is string && theme.surfaceColor.size() >= 4 && theme.surfaceColor.size() <= 16 &&
-        theme.roomThemeId is string && theme.roomThemeId in ['classic', 'night', 'twilight', 'gameboy'];
+        theme.roomThemeId is string && theme.roomThemeId in ['classic', 'night', 'twilight', 'gameboy'] &&
+        (!('islandStyle' in theme) || (theme.islandStyle is string && theme.islandStyle in ['cliffs', 'terraced', 'floating'])) &&
+        (!('frameStyle' in theme) || (theme.frameStyle is string && theme.frameStyle in ['archival', 'ornate', 'minimal']));
+    }
+
+    function isValidDonationConfig(d) {
+      return d is map &&
+        d.keys().hasAll(['enabled', 'url', 'platformLabel', 'note']) &&
+        d.keys().hasOnly(['enabled', 'url', 'platformLabel', 'note']) &&
+        d.enabled is bool &&
+        d.url is string && (d.url == '' || (d.url.size() <= 1000 && d.url.matches('^https?://.*'))) &&
+        d.platformLabel is string && d.platformLabel.size() <= 40 &&
+        d.note is string && d.note.size() <= 200;
     }
 
     function isValidMuseum(data) {
@@ -64,7 +83,7 @@ service cloud.firestore {
         data.keys().hasOnly([
           'ownerId', 'authorName', 'title', 'subtitle', 'category', 'templateId',
           'theme', 'defaultCharacterId', 'isPublic', 'islands', 'rooms',
-          'islandCount', 'pieceCount', 'createdAt', 'updatedAt'
+          'islandCount', 'pieceCount', 'donationConfig', 'createdAt', 'updatedAt'
         ]) &&
         isValidId(data.ownerId) &&
         data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 80 &&
@@ -79,6 +98,7 @@ service cloud.firestore {
         data.rooms is list && data.rooms.size() >= 1 && data.rooms.size() <= 60 && data.rooms[0] is map &&
         data.islandCount is int && data.islandCount >= 1 && data.islandCount <= 20 &&
         data.pieceCount is int && data.pieceCount >= 0 && data.pieceCount <= 500 &&
+        (!('donationConfig' in data) || isValidDonationConfig(data.donationConfig)) &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
     }
@@ -94,6 +114,26 @@ service cloud.firestore {
         c.sourcePieceTitle is string && c.sourcePieceTitle.size() >= 1 && c.sourcePieceTitle.size() <= 120;
     }
 
+    function isValidCuratedSource(data) {
+      return !('curatedFrom' in data) || (
+        isValidCuratedFrom(data.curatedFrom) && (
+          (
+            data.curatedFrom.sourceMuseumId == 'museo404' &&
+            data.curatedFrom.sourceMuseumTitle == 'MUSEO 404 · siNOMBRE' &&
+            data.curatedFrom.sourceAuthorName == 'Colección Original'
+          ) || (
+            isValidId(data.curatedFrom.sourceMuseumId) &&
+            (
+              get(/databases/$(database)/documents/museums/$(data.curatedFrom.sourceMuseumId)).data.isPublic == true ||
+              get(/databases/$(database)/documents/museums/$(data.curatedFrom.sourceMuseumId)).data.ownerId == request.auth.uid
+            ) &&
+            get(/databases/$(database)/documents/museums/$(data.curatedFrom.sourceMuseumId)).data.title == data.curatedFrom.sourceMuseumTitle &&
+            get(/databases/$(database)/documents/museums/$(data.curatedFrom.sourceMuseumId)).data.authorName == data.curatedFrom.sourceAuthorName
+          )
+        )
+      );
+    }
+
     function isValidPiece(data) {
       return data.keys().hasAll([
           'museumId', 'ownerId', 'islandId', 'roomId', 'title', 'subtitle', 'body',
@@ -101,7 +141,9 @@ service cloud.firestore {
         ]) &&
         data.keys().hasOnly([
           'museumId', 'ownerId', 'islandId', 'roomId', 'title', 'subtitle', 'body',
-          'kind', 'type', 'url', 'mediaDataUrl', 'isPublic', 'curatedFrom', 'createdAt', 'updatedAt'
+          'kind', 'type', 'url', 'mediaDataUrl', 'isPublic', 'curatedFrom',
+          'saleStatus', 'priceLabel', 'mediumOrSize', 'paymentUrl',
+          'createdAt', 'updatedAt'
         ]) &&
         isValidId(data.museumId) &&
         isValidId(data.ownerId) &&
@@ -112,11 +154,69 @@ service cloud.firestore {
         data.body is string && data.body.size() <= 12000 &&
         data.kind is string && data.kind in ['text', 'painting', 'app', 'link', 'image', 'audio', 'video'] &&
         data.type is string && data.type in ['text', 'image', 'audio', 'video', 'link'] &&
-        data.url is string && data.url.size() <= 1000 &&
-        data.mediaDataUrl is string && data.mediaDataUrl.size() <= 180000 &&
+        data.url is string && (data.url == '' || (data.url.size() <= 1000 && data.url.matches('^https?://.*'))) &&
+        data.mediaDataUrl is string && (data.mediaDataUrl == '' || (data.mediaDataUrl.size() <= 180000 && data.mediaDataUrl.matches('^data:image/.*'))) &&
         data.isPublic is bool &&
         (!('curatedFrom' in data) || isValidCuratedFrom(data.curatedFrom)) &&
+        (!('saleStatus' in data) || (data.saleStatus is string && data.saleStatus in ['not_for_sale', 'for_sale', 'reserved', 'sold'])) &&
+        (!('priceLabel' in data) || (data.priceLabel is string && data.priceLabel.size() <= 40)) &&
+        (!('mediumOrSize' in data) || (data.mediumOrSize is string && data.mediumOrSize.size() <= 120)) &&
+        (!('paymentUrl' in data) || (data.paymentUrl is string && (data.paymentUrl == '' || (data.paymentUrl.size() <= 1000 && data.paymentUrl.matches('^https?://.*'))))) &&
         data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidGuestbookEntry(data) {
+      return data.keys().hasAll([
+          'museumId', 'islandId', 'roomId', 'scopeLabel', 'nickname', 'message',
+          'authorUid', 'isVisible', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'museumId', 'islandId', 'roomId', 'scopeLabel', 'nickname', 'message',
+          'authorUid', 'isVisible', 'createdAt'
+        ]) &&
+        isValidId(data.museumId) &&
+        data.islandId is string && data.islandId.size() >= 1 && data.islandId.size() <= 80 &&
+        data.roomId is string && data.roomId.size() >= 1 && data.roomId.size() <= 80 &&
+        data.scopeLabel is string && data.scopeLabel.size() >= 1 && data.scopeLabel.size() <= 80 &&
+        data.nickname is string && data.nickname.size() >= 1 && data.nickname.size() <= 40 &&
+        data.message is string && data.message.size() >= 1 && data.message.size() <= 400 &&
+        (data.authorUid == null || (isVerifiedUser() && data.authorUid == request.auth.uid)) &&
+        data.isVisible is bool &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidPurchaseInquiry(data) {
+      return data.keys().hasAll([
+          'museumId', 'museumOwnerId', 'pieceId', 'pieceTitle', 'priceLabel',
+          'buyerName', 'buyerContact', 'shippingLocation', 'message', 'status',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'museumId', 'museumOwnerId', 'pieceId', 'pieceTitle', 'priceLabel',
+          'buyerName', 'buyerContact', 'shippingLocation', 'message', 'status',
+          'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.museumId) &&
+        isValidId(data.museumOwnerId) &&
+        data.pieceId is string && data.pieceId.size() >= 1 && data.pieceId.size() <= 128 &&
+        data.pieceTitle is string && data.pieceTitle.size() >= 1 && data.pieceTitle.size() <= 120 &&
+        data.priceLabel is string && data.priceLabel.size() >= 1 && data.priceLabel.size() <= 40 &&
+        data.buyerName is string && data.buyerName.size() >= 1 && data.buyerName.size() <= 80 &&
+        data.buyerContact is string && data.buyerContact.size() >= 3 && data.buyerContact.size() <= 120 &&
+        data.shippingLocation is string && data.shippingLocation.size() <= 120 &&
+        data.message is string && data.message.size() <= 500 &&
+        data.status is string && data.status in ['pending', 'contacted', 'closed'] &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidFlagshipConfig(data) {
+      return data.keys().hasAll(['theme', 'updatedAt']) &&
+        data.keys().hasOnly(['theme', 'donationConfig', 'pieceCommerce', 'updatedAt']) &&
+        isValidTheme(data.theme) &&
+        (!('donationConfig' in data) || isValidDonationConfig(data.donationConfig)) &&
+        (!('pieceCommerce' in data) || (data.pieceCommerce is map && data.pieceCommerce.size() <= 40)) &&
         data.updatedAt is timestamp;
     }
 
@@ -136,8 +236,8 @@ service cloud.firestore {
         existing().isPublic == true || isOwner(existing().ownerId)
       );
 
-      allow list: if existing().isPublic == true || (
-        isSignedIn() && existing().ownerId == request.auth.uid
+      allow list: if resource.data.isPublic == true || (
+        request.auth != null && resource.data.ownerId == request.auth.uid
       );
 
       allow create: if isVerifiedUser() &&
@@ -156,7 +256,8 @@ service cloud.firestore {
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time && (
           incoming().diff(existing()).affectedKeys().hasOnly([
-            'authorName', 'title', 'subtitle', 'category', 'theme', 'defaultCharacterId', 'isPublic', 'updatedAt'
+            'authorName', 'title', 'subtitle', 'category', 'theme', 'defaultCharacterId',
+            'isPublic', 'donationConfig', 'updatedAt'
           ]) ||
           incoming().diff(existing()).affectedKeys().hasOnly([
             'islands', 'rooms', 'islandCount', 'pieceCount', 'updatedAt'
@@ -176,8 +277,8 @@ service cloud.firestore {
           existing().isPublic == true || isOwner(existing().ownerId)
         );
 
-        allow list: if existing().isPublic == true || (
-          isSignedIn() && existing().ownerId == request.auth.uid
+        allow list: if resource.data.isPublic == true || (
+          request.auth != null && resource.data.ownerId == request.auth.uid
         );
 
         allow create: if isVerifiedUser() &&
@@ -188,8 +289,8 @@ service cloud.firestore {
           incoming().ownerId == request.auth.uid &&
           incoming().createdAt == request.time &&
           incoming().updatedAt == request.time &&
-          exists(/databases/$(database)/documents/museums/$(museumId)) &&
-          get(/databases/$(database)/documents/museums/$(museumId)).data.ownerId == request.auth.uid;
+          get(/databases/$(database)/documents/museums/$(museumId)).data.ownerId == request.auth.uid &&
+          isValidCuratedSource(incoming());
 
         allow update: if isVerifiedUser() &&
           isValidId(museumId) &&
@@ -200,10 +301,10 @@ service cloud.firestore {
           incoming().ownerId == existing().ownerId &&
           incoming().createdAt == existing().createdAt &&
           incoming().updatedAt == request.time &&
-          exists(/databases/$(database)/documents/museums/$(museumId)) &&
           get(/databases/$(database)/documents/museums/$(museumId)).data.ownerId == request.auth.uid && (
             incoming().diff(existing()).affectedKeys().hasOnly([
-              'islandId', 'roomId', 'title', 'subtitle', 'body', 'kind', 'type', 'url', 'mediaDataUrl', 'updatedAt'
+              'islandId', 'roomId', 'title', 'subtitle', 'body', 'kind', 'type', 'url', 'mediaDataUrl',
+              'saleStatus', 'priceLabel', 'mediumOrSize', 'paymentUrl', 'updatedAt'
             ]) ||
             incoming().diff(existing()).affectedKeys().hasOnly([
               'isPublic', 'updatedAt'
@@ -214,9 +315,116 @@ service cloud.firestore {
           isValidId(museumId) &&
           isValidId(pieceId) &&
           isOwner(existing().ownerId) &&
-          exists(/databases/$(database)/documents/museums/$(museumId)) &&
           get(/databases/$(database)/documents/museums/$(museumId)).data.ownerId == request.auth.uid;
       }
+    }
+
+    // Open Guestbook (reception & rooms, free nickname allowed, owner moderation)
+    match /guestbook/{entryId} {
+      allow get: if isValidId(entryId) && (
+        existing().isVisible == true || (
+          isVerifiedUser() && (
+            existing().museumId == 'museo404'
+              ? isFlagshipAdmin()
+              : get(/databases/$(database)/documents/museums/$(existing().museumId)).data.ownerId == request.auth.uid
+          )
+        )
+      );
+
+      allow list: if resource.data.isVisible == true || (
+        request.auth != null && resource.data.authorUid == request.auth.uid
+      );
+
+      allow create: if isValidId(entryId) &&
+        isValidGuestbookEntry(incoming()) &&
+        incoming().isVisible == true &&
+        incoming().createdAt == request.time && (
+          incoming().museumId == 'museo404' ||
+          get(/databases/$(database)/documents/museums/$(incoming().museumId)).data.isPublic == true
+        );
+
+      allow update: if isVerifiedUser() &&
+        isValidId(entryId) &&
+        isValidGuestbookEntry(incoming()) &&
+        incoming().museumId == existing().museumId &&
+        incoming().islandId == existing().islandId &&
+        incoming().roomId == existing().roomId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['isVisible']) && (
+          existing().museumId == 'museo404'
+            ? isFlagshipAdmin()
+            : get(/databases/$(database)/documents/museums/$(existing().museumId)).data.ownerId == request.auth.uid
+        );
+
+      allow delete: if isVerifiedUser() &&
+        isValidId(entryId) && (
+          (existing().authorUid != null && existing().authorUid == request.auth.uid) || (
+            existing().museumId == 'museo404'
+              ? isFlagshipAdmin()
+              : get(/databases/$(database)/documents/museums/$(existing().museumId)).data.ownerId == request.auth.uid
+          )
+        );
+    }
+
+    // Strict PII-Isolated Purchase Inquiries
+    match /purchaseInquiries/{inquiryId} {
+      allow get: if isVerifiedUser() && isValidId(inquiryId) && (
+        existing().museumId == 'museo404'
+          ? isFlagshipAdmin()
+          : existing().museumOwnerId == request.auth.uid
+      );
+
+      allow list: if request.auth != null && request.auth.token.email_verified == true && (
+        resource.data.museumOwnerId == request.auth.uid ||
+        (resource.data.museumId == 'museo404' && request.auth.token.email == 'sarvideleonardo@gmail.com')
+      );
+
+      allow create: if isValidId(inquiryId) &&
+        isValidPurchaseInquiry(incoming()) &&
+        incoming().status == 'pending' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time && (
+          (incoming().museumId == 'museo404' && incoming().museumOwnerId == 'museo404') ||
+          (
+            incoming().museumId != 'museo404' &&
+            get(/databases/$(database)/documents/museums/$(incoming().museumId)).data.isPublic == true &&
+            get(/databases/$(database)/documents/museums/$(incoming().museumId)).data.ownerId == incoming().museumOwnerId
+          )
+        );
+
+      allow update: if isVerifiedUser() &&
+        isValidId(inquiryId) &&
+        isValidPurchaseInquiry(incoming()) &&
+        (
+          existing().museumId == 'museo404'
+            ? isFlagshipAdmin()
+            : existing().museumOwnerId == request.auth.uid
+        ) &&
+        existing().status != 'closed' &&
+        incoming().museumId == existing().museumId &&
+        incoming().museumOwnerId == existing().museumOwnerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
+
+      allow delete: if isVerifiedUser() && isValidId(inquiryId) && (
+        existing().museumId == 'museo404'
+          ? isFlagshipAdmin()
+          : existing().museumOwnerId == request.auth.uid
+      );
+    }
+
+    // Official Flagship Config (Theme, Donation URL, Painting Sale Statuses)
+    match /flagship/{docId} {
+      allow get: if docId == 'config';
+      allow list: if false;
+
+      allow create, update: if isFlagshipAdmin() &&
+        docId == 'config' &&
+        isValidFlagshipConfig(incoming()) &&
+        incoming().updatedAt == request.time;
+
+      allow delete: if false;
     }
 
     // Strict PII & Personal Preferences Split Collection

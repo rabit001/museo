@@ -1,23 +1,32 @@
-# Security Specification — Museo 404 Creator Network
+# Security Specification — Museo 404 Creator Network & Visitor Interactions
 
 ## 1. Data Invariants
-1. **Museum Ownership & Identity Integrity**: A `Museum` document at `/museums/{museumId}` must have `ownerId == request.auth.uid`, an email-verified creator (`request.auth.token.email_verified == true`), and an immutable `ownerId` and `createdAt` after creation.
-2. **Public Directory vs Private Draft Isolation**: Unauthenticated or non-owner users can `get` or `list` `/museums/{museumId}` and `/museums/{museumId}/pieces/{pieceId}` ONLY when `resource.data.isPublic == true`. Non-owners can never read private (`isPublic == false`) museums or pieces.
-3. **Master Gate Relational Sync for Pieces**: A `MuseumPiece` at `/museums/{museumId}/pieces/{pieceId}` cannot exist or be mutated unless the parent `/museums/{museumId}` exists, its `ownerId == request.auth.uid`, and `incoming().museumId == museumId` and `incoming().ownerId == request.auth.uid`.
-4. **PII Isolation**: User email addresses are stored exclusively in `/users/{userId}/private/profile`, where only the verified owner (`request.auth.uid == userId`) can read or write, and `list` is explicitly denied.
-5. **Bounded Sizes & Strict Keys (Anti-Poisoning / Anti-DoW)**: All document IDs match `^[a-zA-Z0-9_\-]+$` (<= 128 chars). All strings, arrays (`islands <= 20`, `rooms <= 60`), and optional `mediaDataUrl` (`<= 180000` bytes) are strictly type- and size-checked. Every `create` checks `hasAll` + `hasOnly`, and every `update` uses action-based `affectedKeys().hasOnly(...)` combined with `isValid[Entity](incoming())`.
-6. **Temporal Integrity**: `createdAt == request.time` on creation and immutable on updates; `updatedAt == request.time` on both creation and updates.
+1. **Museum Ownership & Identity Integrity**: A `Museum` document at `/museums/{museumId}` must have `ownerId == request.auth.uid`, an email-verified creator (`request.auth.token.email_verified == true`), and immutable `ownerId`, `templateId`, and `createdAt` after creation.
+2. **Disjoint Museum Updates**: Updates on `/museums/{museumId}` are partitioned into disjoint action groups: metadata (`authorName, title, subtitle, category, theme, defaultCharacterId, isPublic, donationConfig, updatedAt`), structure (`islands, rooms, islandCount, pieceCount, updatedAt`), and count sync (`pieceCount, updatedAt`).
+3. **Public Directory vs Private Draft Isolation (Direct `resource.data` List Guards)**: Unauthenticated or non-owner users can `get` or `list` `/museums/{museumId}` and `/museums/{museumId}/pieces/{pieceId}` ONLY when `resource.data.isPublic == true`. `allow list` rules evaluate `resource.data` and `request.auth` directly without custom helper indirection.
+4. **Master Gate Relational Sync for Pieces (Single `get()`)**: A `MuseumPiece` at `/museums/{museumId}/pieces/{pieceId}` cannot be created, updated, or deleted unless `get(/databases/$(database)/documents/museums/$(museumId)).data.ownerId == request.auth.uid`.
+5. **Cross-Museum Attribution Anti-Spoofing (`curatedFrom`)**: When `curatedFrom` is supplied on piece `create`, rules verify either canonical flagship constants (`museo404` / `MUSEO 404 · siNOMBRE` / `Colección Original`) or exact parent museum `title` and `authorName`. `curatedFrom` cannot be injected or mutated on `update`.
+6. **URL & Image Payload Guards**: `url`, `donationConfig.url`, and `paymentUrl` must be empty or match `^https?://.*`; `mediaDataUrl` must be empty or match `^data:image/.*` and `<= 180000` bytes.
+7. **Open Guestbook with Bounded Validation & Owner Moderation (`/guestbook/{entryId}`)**: Anyone (authenticated or unauthenticated visitor with free nickname) may `create` a guestbook entry if `isVisible == true`, `createdAt == request.time`, `nickname` is `1–40` chars, `message` is `1–400` chars, `scopeLabel` is `1–80` chars, `authorUid` is `null` or verified `request.auth.uid`, and the target museum is either `'museo404'` or an existing public museum. Public `list` queries require `resource.data.isVisible == true`. Only the museum owner (or flagship admin for `'museo404'`) may hide (`isVisible: false`) or delete comments (authenticated authors may also delete their own signed entries).
+8. **Strict PII Isolation for Purchase Inquiries (`/purchaseInquiries/{inquiryId}`)**: Anyone may `create` an inquiry with `status == 'pending'`, `createdAt == request.time`, `updatedAt == request.time`, and verified `museumOwnerId` matching either `'museo404'` or `/museums/$(museumId).data.ownerId`. `get`, `list`, `update`, and `delete` are strictly restricted to the verified `museumOwnerId` (or verified flagship admin email `sarvideleonardo@gmail.com` for `'museo404'`). Non-owners can NEVER read buyer contact details (`PERMISSION_DENIED`).
+9. **User Profile PII Isolation**: User email addresses are stored exclusively in `/users/{userId}/private/profile`, where only the verified owner (`request.auth.uid == userId`) can read/write, and `list` is explicitly denied.
+10. **Flagship Configuration Isolation (`/flagship/config`)**: Readable via `get` only (`allow list: if false`); writable exclusively by verified flagship admin email (`sarvideleonardo@gmail.com`).
+11. **Temporal Integrity**: `createdAt == request.time` on creation and immutable on updates; `updatedAt == request.time` via `serverTimestamp()` on all writes.
 
-## 2. The "Dirty Dozen" Adversarial Payloads
+## 2. The "Dirty Dozen" + Hardened Verification Payloads
 1. **Identity Spoofing on Museum Create**: Authenticated user `alice` creates `/museums/m1` with `ownerId: "bob"`. -> `PERMISSION_DENIED`.
 2. **Ghost / Shadow Field Injection on Museum Create**: Authenticated user `alice` includes extra field `isAdminVerified: true` on `/museums/m1`. -> `PERMISSION_DENIED`.
 3. **Unverified Email Write**: Authenticated user with `email_verified: false` attempts to create a museum or piece. -> `PERMISSION_DENIED`.
 4. **Blanket List Scraping Private Museums**: User `bob` runs `list` on `/museums` without filtering `where('isPublic', '==', true)` or queries private museums of `alice`. -> `PERMISSION_DENIED`.
 5. **Orphaned Piece Create (Missing Parent Museum)**: User `alice` creates `/museums/nonexistent/pieces/p1` with `ownerId: "alice"`. -> `PERMISSION_DENIED`.
-6. **Hijacking Another Creator's Museum with a Piece**: User `bob` tries to create `/museums/aliceMuseum/pieces/p1` even with `ownerId: "bob"`. -> `PERMISSION_DENIED` (Master Gate checks parent `ownerId`).
+6. **Hijacking Another Creator's Museum with a Piece**: User `bob` tries to create `/museums/aliceMuseum/pieces/p1` even with `ownerId: "bob"`. -> `PERMISSION_DENIED`.
 7. **Owner Transfer Attack on Update**: User `alice` updates `/museums/m1` attempting to mutate `ownerId` or `createdAt`. -> `PERMISSION_DENIED`.
-8. **Type / Value Poisoning on Update**: User `alice` updates `/museums/m1` setting `title: 12345` or `title` > 100 chars. -> `PERMISSION_DENIED`.
-9. **Array Flood (Denial of Wallet)**: User `alice` tries to write 25 islands (`islands.size() > 20`) or 70 rooms (`rooms.size() > 60`) in `/museums/m1`. -> `PERMISSION_DENIED`.
-10. **Payload Bloat (1MB Document Exhaustion)**: User `alice` writes `mediaDataUrl` > 180,000 chars or `body` > 12,000 chars in `/museums/m1/pieces/p1`. -> `PERMISSION_DENIED`.
-11. **Path ID Poisoning**: User `alice` attempts to write to `/museums/bad$id!with*chars` or a 200-char doc ID. -> `PERMISSION_DENIED`.
+8. **Type / Value Poisoning on Update**: User `alice` updates `/museums/m1` setting `title` > 100 chars or mixing metadata + structure keys in one `updateDoc`. -> `PERMISSION_DENIED`.
+9. **Array Flood (Denial of Wallet)**: User `alice` tries to write 25 islands (`islands.size() > 20`) or 70 rooms (`rooms.size() > 60`). -> `PERMISSION_DENIED`.
+10. **Payload Bloat / MIME / URL Spoofing**: User `alice` writes `mediaDataUrl` > 180,000 chars, `url: "javascript:alert(1)"`, or `donationConfig.url: "javascript:alert(1)"`. -> `PERMISSION_DENIED`.
+11. **Path ID Poisoning**: User `alice` attempts to write to `/museums/bad$id!with*chars`. -> `PERMISSION_DENIED`.
 12. **PII Leak Attempt on Private Profile**: Authenticated user `bob` attempts `get` on `/users/alice/private/profile` or `list` on `/users`. -> `PERMISSION_DENIED`.
+13. **Cross-Museum Attribution Spoofing**: User `bob` tries to create a piece with `curatedFrom` pointing to a fake `sourceMuseumTitle` or fake `sourceAuthorName`. -> `PERMISSION_DENIED`.
+14. **PII Leak Attempt on Purchase Inquiries**: Anonymous user or user `bob` tries `get` or `list` on `/purchaseInquiries` belonging to `alice` or `'museo404'`. -> `PERMISSION_DENIED`.
+15. **Inquiry Owner Spoofing / Status Tampering**: Visitor creates `/purchaseInquiries/inq1` with `status: 'contacted'` or mismatched `museumOwnerId`. -> `PERMISSION_DENIED`.
+16. **Guestbook Oversized / Hidden Injection / Foreign Delete**: Visitor tries to create `/guestbook/g1` with `isVisible: false`, `nickname` > 40 chars, `authorUid` of another user, or non-owner tries to delete someone else's entry. -> `PERMISSION_DENIED`.

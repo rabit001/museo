@@ -367,6 +367,7 @@ export const ArchipelagoMap: React.FC<ArchipelagoMapProps> = ({
               cx={island.x * 14.4}
               cy={island.y * 9}
               scale={island.isOriginal ? 1 : 0.86}
+              islandStyle={theme?.islandStyle}
             />
           ))}
 

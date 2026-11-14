@@ -629,6 +629,38 @@ export class SpriteRenderer {
     ctx.fillRect(x + 4, y + 10, 7, 1);
   }
 
+  drawVoxelGuestbook(ctx: CanvasRenderingContext2D, px: number, py: number, animTick = 0): void {
+    const x = Math.floor(px);
+    const y = Math.floor(py);
+    const m = this.palette.madera;
+    const o = this.palette.oro;
+    // Sombra base
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.32)';
+    ctx.fillRect(x + 2, y + 14, 12, 2);
+    // Atril de madera
+    ctx.fillStyle = m[0];
+    ctx.fillRect(x + 5, y + 8, 6, 7);
+    ctx.fillStyle = m[1];
+    ctx.fillRect(x + 2, y + 4, 12, 6);
+    // Páginas abiertas en crema
+    ctx.fillStyle = '#f8f3dc';
+    ctx.fillRect(x + 3, y + 3, 10, 5);
+    ctx.fillStyle = '#cfc5a4';
+    ctx.fillRect(x + 7, y + 3, 2, 5);
+    // Renglones escritos y listón rojo/dorado
+    ctx.fillStyle = '#4c6f73';
+    ctx.fillRect(x + 4, y + 4, 2, 1);
+    ctx.fillRect(x + 4, y + 6, 2, 1);
+    ctx.fillRect(x + 10, y + 4, 2, 1);
+    ctx.fillStyle = this.palette.ropaRoja[0];
+    ctx.fillRect(x + 8, y + 7, 1, 3);
+    // Destello dorado suave
+    if (Math.floor(animTick / 20) % 2 === 0) {
+      ctx.fillStyle = o[1];
+      ctx.fillRect(x + 11, y + 1, 2, 2);
+    }
+  }
+
   renderTorches(ctx: CanvasRenderingContext2D, torches: { x: number; y: number }[], animTick = 0): void {
     for (const t of torches) {
       this.drawVoxelTorch(ctx, t.x, t.y, animTick);
@@ -699,7 +731,12 @@ export class SpriteRenderer {
     });
 
     (room.interactives || []).forEach((item, i) => {
-      if (item.type === 'pedestal' || item.type === 'painting' || item.type === 'arcade') {
+      if (
+        item.type === 'pedestal' ||
+        item.type === 'painting' ||
+        item.type === 'arcade' ||
+        item.type === 'guestbook'
+      ) {
         punchLight(item.x + 8, item.y + 8, 28, Math.sin(animTick * 0.08 + i) * 1.2);
       } else if (item.type === 'fountain') {
         punchLight(item.x + 16, item.y + 12, 48, Math.sin(animTick * 0.1) * 2);

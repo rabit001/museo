@@ -42,6 +42,8 @@ interface Archipelago3DProps {
   onSelectIsland: (islandId: string) => void;
   onOpenPiece: (piece: MuseumPiece) => void;
   onEnter2DMode: (islandId: string) => void;
+  onOpenGuestbook?: () => void;
+  onOpenSupport?: () => void;
 }
 
 const PRESET_CONFIG: Record<
@@ -113,6 +115,8 @@ export const Archipelago3D: React.FC<Archipelago3DProps> = ({
   onSelectIsland,
   onOpenPiece,
   onEnter2DMode,
+  onOpenGuestbook,
+  onOpenSupport,
 }) => {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const radarRef = useRef<MiniCompassHandle | null>(null);
@@ -128,6 +132,10 @@ export const Archipelago3D: React.FC<Archipelago3DProps> = ({
   onSelectIslandRef.current = onSelectIsland;
   const onOpenPieceRef = useRef(onOpenPiece);
   onOpenPieceRef.current = onOpenPiece;
+  const onOpenGuestbookRef = useRef(onOpenGuestbook);
+  onOpenGuestbookRef.current = onOpenGuestbook;
+  const onOpenSupportRef = useRef(onOpenSupport);
+  onOpenSupportRef.current = onOpenSupport;
 
   // Player & camera mutable physics state
   const playerRef = useRef({
@@ -185,7 +193,7 @@ export const Archipelago3D: React.FC<Archipelago3DProps> = ({
   const [webglError, setWebglError] = useState(() => !webglCap.supported);
   const [nearbyTrigger, setNearbyTrigger] = useState<{
     id: string;
-    kind: 'island' | 'piece';
+    kind: 'island' | 'piece' | 'guestbook' | 'support';
     islandId: string;
     label: string;
     sublabel: string;
@@ -213,7 +221,11 @@ export const Archipelago3D: React.FC<Archipelago3DProps> = ({
   const triggerInteract = useCallback(() => {
     const trig = activeTriggerRef.current;
     if (trig) {
-      if (trig.kind === 'piece' && trig.piece) {
+      if (trig.kind === 'guestbook') {
+        onOpenGuestbookRef.current?.();
+      } else if (trig.kind === 'support') {
+        onOpenSupportRef.current?.();
+      } else if (trig.kind === 'piece' && trig.piece) {
         onOpenPieceRef.current(trig.piece);
       } else {
         onSelectIslandRef.current(trig.islandId);
@@ -995,6 +1007,8 @@ export const Archipelago3D: React.FC<Archipelago3DProps> = ({
         onSelectIsland={onSelectIsland}
         onOpenPiece={onOpenPiece}
         onEnter2DMode={onEnter2DMode}
+        onOpenGuestbook={onOpenGuestbook}
+        onOpenSupport={onOpenSupport}
       />
     );
   }
@@ -1035,7 +1049,13 @@ export const Archipelago3D: React.FC<Archipelago3DProps> = ({
           >
             <div className="min-w-0">
               <p className="font-pixel truncate text-[9px] text-[#f4d47d]">
-                {nearbyTrigger.kind === 'piece' ? 'PIEZA CERCANA' : 'ENTRADA DE ISLA'}
+                {nearbyTrigger.kind === 'piece'
+                  ? 'PIEZA CERCANA'
+                  : nearbyTrigger.kind === 'guestbook'
+                    ? 'LIBRO DE VISITAS'
+                    : nearbyTrigger.kind === 'support'
+                      ? 'APOYO AL PROYECTO'
+                      : 'ENTRADA DE ISLA'}
               </p>
               <p className="mt-1 truncate text-base font-bold text-[#fff9e6]">
                 {nearbyTrigger.label}

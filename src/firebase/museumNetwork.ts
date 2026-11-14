@@ -24,15 +24,20 @@ import {
   CharacterId,
   CloudMuseum,
   CuratedFromMeta,
+  DonationConfig,
+  FrameStyle,
   Island,
+  IslandShapeStyle,
   MuseumCategory,
   MuseumPiece,
   MuseumThemeConfig,
   PieceKind,
   PieceType,
   Room,
+  SaleStatus,
 } from '../types/museum';
 import { OperationType, auth, db, googleProvider, handleFirestoreError } from './client';
+import { sanitizeDonationConfig } from './interactions';
 
 function clampStr(val: unknown, max: number, fallback = ''): string {
   const s = typeof val === 'string' ? val : fallback;
@@ -49,6 +54,15 @@ function sanitizeTheme(theme?: Partial<MuseumThemeConfig>): MuseumThemeConfig {
     theme?.roomThemeId && ['classic', 'night', 'twilight', 'gameboy'].includes(theme.roomThemeId)
       ? theme.roomThemeId
       : DEFAULT_MUSEUM_THEME.roomThemeId;
+  const islandStyle: IslandShapeStyle | undefined =
+    theme?.islandStyle && ['cliffs', 'terraced', 'floating'].includes(theme.islandStyle)
+      ? theme.islandStyle
+      : DEFAULT_MUSEUM_THEME.islandStyle;
+  const frameStyle: FrameStyle | undefined =
+    theme?.frameStyle && ['archival', 'ornate', 'minimal'].includes(theme.frameStyle)
+      ? theme.frameStyle
+      : DEFAULT_MUSEUM_THEME.frameStyle;
+
   return {
     presetId: clampStr(theme?.presetId || DEFAULT_MUSEUM_THEME.presetId, 32) || 'custom',
     skyColor: clampStr(theme?.skyColor || DEFAULT_MUSEUM_THEME.skyColor, 16) || '#6ec9da',
@@ -56,6 +70,8 @@ function sanitizeTheme(theme?: Partial<MuseumThemeConfig>): MuseumThemeConfig {
     accentColor: clampStr(theme?.accentColor || DEFAULT_MUSEUM_THEME.accentColor, 16) || '#f4d47d',
     surfaceColor: clampStr(theme?.surfaceColor || DEFAULT_MUSEUM_THEME.surfaceColor, 16) || '#072634',
     roomThemeId: roomTheme,
+    ...(islandStyle ? { islandStyle } : {}),
+    ...(frameStyle ? { frameStyle } : {}),
   };
 }
 
@@ -94,6 +110,15 @@ function sanitizeCuratedFrom(c: CuratedFromMeta): CuratedFromMeta {
 }
 
 function mapMuseumDoc(id: string, data: Record<string, any>): CloudMuseum {
+  let donationConfig: DonationConfig | undefined;
+  if (data.donationConfig && typeof data.donationConfig === 'object') {
+    try {
+      donationConfig = sanitizeDonationConfig(data.donationConfig as Partial<DonationConfig>);
+    } catch {
+      donationConfig = undefined;
+    }
+  }
+
   return {
     id,
     ownerId: String(data.ownerId || ''),
@@ -109,10 +134,17 @@ function mapMuseumDoc(id: string, data: Record<string, any>): CloudMuseum {
     rooms: Array.isArray(data.rooms) ? data.rooms : [],
     islandCount: Number(data.islandCount || (Array.isArray(data.islands) ? data.islands.length : 0)),
     pieceCount: Number(data.pieceCount || 0),
+    ...(donationConfig ? { donationConfig } : {}),
   };
 }
 
 function mapPieceDoc(id: string, data: Record<string, any>): MuseumPiece {
+  const rawSale = String(data.saleStatus || 'not_for_sale');
+  const saleStatus: SaleStatus =
+    rawSale === 'for_sale' || rawSale === 'reserved' || rawSale === 'sold'
+      ? rawSale
+      : 'not_for_sale';
+
   const piece: MuseumPiece = {
     id,
     islandId: String(data.islandId || ''),
@@ -125,6 +157,10 @@ function mapPieceDoc(id: string, data: Record<string, any>): MuseumPiece {
     url: String(data.url || ''),
     mediaDataUrl: typeof data.mediaDataUrl === 'string' && data.mediaDataUrl ? data.mediaDataUrl : null,
     custom: true,
+    saleStatus,
+    priceLabel: typeof data.priceLabel === 'string' ? data.priceLabel : '',
+    mediumOrSize: typeof data.mediumOrSize === 'string' ? data.mediumOrSize : '',
+    paymentUrl: typeof data.paymentUrl === 'string' ? data.paymentUrl : '',
   };
   if (data.curatedFrom && typeof data.curatedFrom === 'object') {
     piece.curatedFrom = sanitizeCuratedFrom(data.curatedFrom as CuratedFromMeta);
@@ -351,6 +387,7 @@ export async function updateCloudMuseumMetadata(
     theme: MuseumThemeConfig;
     defaultCharacterId: CharacterId;
     isPublic: boolean;
+    donationConfig?: DonationConfig;
   }
 ): Promise<CloudMuseum> {
   const path = `museums/${museum.id}`;
@@ -358,18 +395,26 @@ export async function updateCloudMuseumMetadata(
   const authorName = clampStr(patch.authorName.trim() || museum.authorName, 80);
   const title = clampStr(patch.title.trim() || museum.title, 100);
   const subtitle = clampStr(patch.subtitle.trim(), 180);
+  const cleanDonation = patch.donationConfig
+    ? sanitizeDonationConfig(patch.donationConfig)
+    : undefined;
+
+  const payload: Record<string, unknown> = {
+    authorName,
+    title,
+    subtitle,
+    category: patch.category,
+    theme: cleanTheme,
+    defaultCharacterId: patch.defaultCharacterId,
+    isPublic: Boolean(patch.isPublic),
+    updatedAt: serverTimestamp(),
+  };
+  if (cleanDonation) {
+    payload.donationConfig = cleanDonation;
+  }
 
   try {
-    await updateDoc(doc(db, 'museums', museum.id), {
-      authorName,
-      title,
-      subtitle,
-      category: patch.category,
-      theme: cleanTheme,
-      defaultCharacterId: patch.defaultCharacterId,
-      isPublic: Boolean(patch.isPublic),
-      updatedAt: serverTimestamp(),
-    });
+    await updateDoc(doc(db, 'museums', museum.id), payload);
 
     if (patch.isPublic !== museum.isPublic) {
       const piecesSnap = await getDocs(
@@ -403,6 +448,7 @@ export async function updateCloudMuseumMetadata(
     theme: cleanTheme,
     defaultCharacterId: patch.defaultCharacterId,
     isPublic: Boolean(patch.isPublic),
+    ...(cleanDonation ? { donationConfig: cleanDonation } : {}),
   };
 }
 
@@ -451,6 +497,10 @@ export async function saveCloudPiece(
     url: string;
     mediaDataUrl?: string | null;
     curatedFrom?: CuratedFromMeta;
+    saleStatus?: SaleStatus;
+    priceLabel?: string;
+    mediumOrSize?: string;
+    paymentUrl?: string;
   },
   currentTotalPieces: number
 ): Promise<{ piece: MuseumPiece; nextPieceCount: number }> {
@@ -467,13 +517,31 @@ export async function saveCloudPiece(
           : input.type === 'link'
             ? 'link'
             : 'text';
-  const mediaDataUrl = clampStr(input.mediaDataUrl || '', 180000);
+  const rawMediaDataUrl = clampStr(input.mediaDataUrl || '', 180000).trim();
+  if (rawMediaDataUrl && !/^data:image\//i.test(rawMediaDataUrl)) {
+    throw new Error('Las imágenes guardadas en la nube deben tener formato data:image/.');
+  }
+  const mediaDataUrl = rawMediaDataUrl;
   const title = clampStr(input.title.trim() || 'Pieza', 120);
   const subtitle = clampStr(input.subtitle.trim(), 140);
   const body = clampStr(input.body || '', 12000);
   const url = clampStr(input.url.trim(), 1000);
+  if (url && !/^https?:\/\//i.test(url)) {
+    throw new Error('Los enlaces externos deben comenzar con https:// o http://.');
+  }
   const islandId = cleanId(input.islandId, 'isl');
   const roomId = cleanId(input.roomId, 'room');
+
+  const saleStatus: SaleStatus =
+    input.saleStatus && ['not_for_sale', 'for_sale', 'reserved', 'sold'].includes(input.saleStatus)
+      ? input.saleStatus
+      : 'not_for_sale';
+  const priceLabel = clampStr(input.priceLabel?.trim() || '', 40);
+  const mediumOrSize = clampStr(input.mediumOrSize?.trim() || '', 120);
+  const paymentUrl = clampStr(input.paymentUrl?.trim() || '', 1000);
+  if (paymentUrl && !/^https?:\/\//i.test(paymentUrl)) {
+    throw new Error('El enlace de pago directo debe comenzar con https:// o http://.');
+  }
 
   try {
     if (isNew) {
@@ -491,6 +559,10 @@ export async function saveCloudPiece(
         type: input.type,
         url,
         mediaDataUrl,
+        saleStatus,
+        priceLabel,
+        mediumOrSize,
+        paymentUrl,
         isPublic: museum.isPublic,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -519,6 +591,10 @@ export async function saveCloudPiece(
           mediaDataUrl: mediaDataUrl || null,
           custom: true,
           curatedFrom: input.curatedFrom ? sanitizeCuratedFrom(input.curatedFrom) : undefined,
+          saleStatus,
+          priceLabel,
+          mediumOrSize,
+          paymentUrl,
         },
         nextPieceCount,
       };
@@ -534,6 +610,10 @@ export async function saveCloudPiece(
       type: input.type,
       url,
       mediaDataUrl,
+      saleStatus,
+      priceLabel,
+      mediumOrSize,
+      paymentUrl,
       updatedAt: serverTimestamp(),
     });
 
@@ -551,6 +631,10 @@ export async function saveCloudPiece(
         mediaDataUrl: mediaDataUrl || null,
         custom: true,
         curatedFrom: input.curatedFrom,
+        saleStatus,
+        priceLabel,
+        mediumOrSize,
+        paymentUrl,
       },
       nextPieceCount: currentTotalPieces,
     };

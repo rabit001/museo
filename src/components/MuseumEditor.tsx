@@ -1,10 +1,15 @@
-import React, { useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { User } from 'firebase/auth';
 import {
   ArrowLeft,
+  CheckCircle2,
   Download,
+  Heart,
   Palette,
   Plus,
+  RefreshCw,
   RotateCcw,
+  ShoppingBag,
   Trash2,
   Upload,
   X,
@@ -12,6 +17,12 @@ import {
 import { CHARACTER_PROFILES } from '../data/characters';
 import { BIOME_LABELS, ORIGINAL_ISLANDS, getBasePiecesForIsland } from '../data/initialContent';
 import { CATEGORY_META, DEFAULT_MUSEUM_THEME, MUSEUM_THEME_PRESETS } from '../data/themes';
+import {
+  deletePurchaseInquiry,
+  fetchOwnerInquiries,
+  sanitizeDonationConfig,
+  updateInquiryStatus,
+} from '../firebase/interactions';
 import {
   deleteCloudMuseum,
   deleteCloudPiece,
@@ -36,14 +47,21 @@ import {
 import {
   CharacterId,
   CloudMuseum,
+  DonationConfig,
+  FlagshipConfig,
+  FrameStyle,
+  InquiryStatus,
   Island,
   IslandBiome,
+  IslandShapeStyle,
   MuseumCategory,
   MuseumPiece,
   MuseumState,
   MuseumThemeConfig,
   PieceType,
+  PurchaseInquiry,
   Room,
+  SaleStatus,
   ThemeId,
 } from '../types/museum';
 
@@ -54,6 +72,10 @@ export type EditorSource =
       onUpdateState: (next: MuseumState) => void;
       theme?: MuseumThemeConfig;
       onUpdateTheme?: (next: MuseumThemeConfig) => void;
+      flagshipConfig?: FlagshipConfig;
+      onSaveFlagshipConfig?: (next: FlagshipConfig) => Promise<void> | void;
+      isFlagshipAdmin?: boolean;
+      authUser?: User | null;
     }
   | {
       kind: 'cloud';
@@ -61,22 +83,52 @@ export type EditorSource =
       pieces: MuseumPiece[];
       onSyncMuseum: (nextMuseum: CloudMuseum, nextPieces: MuseumPiece[]) => void;
       onDeletedMuseum: (deletedMuseumId: string) => void;
+      authUser?: User | null;
     };
 
 interface MuseumEditorProps {
   source: EditorSource;
+  initialViewMode?: 'appearance' | 'inquiries';
   onClose: () => void;
 }
 
 type EditorView =
   | { mode: 'appearance' }
+  | { mode: 'inquiries' }
   | { mode: 'island'; islandId: string }
   | { mode: 'new-island' }
   | { mode: 'room'; islandId: string; roomId: string }
   | { mode: 'piece'; islandId: string; roomId: string; pieceId: string | null };
 
-export const MuseumEditor: React.FC<MuseumEditorProps> = ({ source, onClose }) => {
+const DEFAULT_DONATION_STATE: DonationConfig = {
+  enabled: false,
+  url: '',
+  platformLabel: 'PayPal',
+  note: '',
+};
+
+const SALE_STATUS_LABELS: Record<SaleStatus, string> = {
+  not_for_sale: 'No está a la venta (solo archivo)',
+  for_sale: 'En venta (disponible)',
+  reserved: 'Reservada',
+  sold: 'Vendida',
+};
+
+const INQUIRY_STATUS_LABELS: Record<InquiryStatus, string> = {
+  pending: 'Pendiente',
+  contacted: 'Contactado',
+  closed: 'Cerrada',
+};
+
+export const MuseumEditor: React.FC<MuseumEditorProps> = ({
+  source,
+  initialViewMode,
+  onClose,
+}) => {
   const isCloud = source.kind === 'cloud';
+  const isFlagshipAdmin = source.kind === 'local' && Boolean(source.isFlagshipAdmin);
+  const canManageDonations = isCloud || isFlagshipAdmin;
+  const canManageInquiries = (isCloud && Boolean(source.authUser?.uid)) || isFlagshipAdmin;
 
   const visibleIslands: Island[] = isCloud
     ? source.museum.islands
@@ -91,24 +143,46 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({ source, onClose }) =
       ? source.museum.rooms.filter((r) => r.islandId === islandId)
       : getRoomsForIsland(source.state, islandId);
 
-  const getPieces = (islandId: string, roomId: string): MuseumPiece[] =>
-    isCloud
-      ? source.pieces.filter((p) => p.islandId === islandId && p.roomId === roomId)
-      : getPiecesForRoom(source.state, islandId, roomId);
+  const getPieces = (islandId: string, roomId: string): MuseumPiece[] => {
+    if (isCloud) {
+      return source.pieces.filter((p) => p.islandId === islandId && p.roomId === roomId);
+    }
+    const base = getPiecesForRoom(source.state, islandId, roomId);
+    const commerceMap = source.flagshipConfig?.pieceCommerce;
+    if (!commerceMap) return base;
+    return base.map((p) => {
+      const ov = source.state.overrides[p.id];
+      const cloudComm = commerceMap[p.id];
+      if (!cloudComm) return p;
+      return {
+        ...p,
+        saleStatus: ov?.saleStatus ?? cloudComm.saleStatus,
+        priceLabel: ov?.priceLabel ?? cloudComm.priceLabel,
+        mediumOrSize: ov?.mediumOrSize ?? cloudComm.mediumOrSize,
+        paymentUrl: ov?.paymentUrl ?? cloudComm.paymentUrl,
+      };
+    });
+  };
 
   const getIslandPiecesCount = (islandId: string): number =>
     isCloud
       ? source.pieces.filter((p) => p.islandId === islandId).length
       : getPiecesCountForIsland(source.state, islandId);
 
-  const [view, setView] = useState<EditorView>(() => ({
-    mode: 'island',
-    islandId: visibleIslands[0]?.id || 'patio',
-  }));
+  const [view, setView] = useState<EditorView>(() => {
+    if (initialViewMode === 'appearance') return { mode: 'appearance' };
+    if (initialViewMode === 'inquiries' && canManageInquiries) return { mode: 'inquiries' };
+    return {
+      mode: 'island',
+      islandId: visibleIslands[0]?.id || 'patio',
+    };
+  });
   const [notice, setNotice] = useState<string>(
     isCloud
       ? 'Este museo se guarda en la nube y puede visitarse desde el directorio.'
-      : 'Los cambios se guardan automáticamente en este navegador.'
+      : isFlagshipAdmin
+        ? 'Editando como curador principal de Museo 404.'
+        : 'Los cambios se guardan automáticamente en este navegador.'
   );
   const [confirmState, setConfirmState] = useState<{
     message: string;
@@ -130,9 +204,26 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({ source, onClose }) =
     isCloud ? source.museum.defaultCharacterId : 'explorador'
   );
   const [metaTheme, setMetaTheme] = useState<MuseumThemeConfig>(
-    isCloud ? source.museum.theme : source.theme || DEFAULT_MUSEUM_THEME
+    isCloud
+      ? { ...DEFAULT_MUSEUM_THEME, ...source.museum.theme }
+      : { ...DEFAULT_MUSEUM_THEME, ...(source.theme || source.flagshipConfig?.theme || {}) }
   );
+  const initialDonation = isCloud
+    ? source.museum.donationConfig
+    : source.flagshipConfig?.donationConfig;
+  const [donationEnabled, setDonationEnabled] = useState<boolean>(Boolean(initialDonation?.enabled));
+  const [donationPlatform, setDonationPlatform] = useState<string>(
+    initialDonation?.platformLabel || DEFAULT_DONATION_STATE.platformLabel
+  );
+  const [donationUrl, setDonationUrl] = useState<string>(initialDonation?.url || '');
+  const [donationNote, setDonationNote] = useState<string>(initialDonation?.note || '');
   const [savingMeta, setSavingMeta] = useState(false);
+
+  // Estado de Solicitudes de Compra
+  const [inquiries, setInquiries] = useState<PurchaseInquiry[]>([]);
+  const [inquiriesLoading, setInquiriesLoading] = useState(false);
+  const [inquiriesError, setInquiriesError] = useState<string | null>(null);
+  const [updatingInquiryId, setUpdatingInquiryId] = useState<string | null>(null);
 
   // Formulario inline para nueva sala
   const [creatingRoomName, setCreatingRoomName] = useState('');
@@ -150,7 +241,7 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({ source, onClose }) =
   const [newIslY, setNewIslY] = useState<number>(suggestedPos.y);
 
   const activeIsland =
-    view.mode !== 'new-island' && view.mode !== 'appearance'
+    view.mode !== 'new-island' && view.mode !== 'appearance' && view.mode !== 'inquiries'
       ? visibleIslands.find((i) => i.id === view.islandId) || visibleIslands[0]
       : null;
 
@@ -171,10 +262,47 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({ source, onClose }) =
   const [pieceType, setPieceType] = useState<PieceType>('text');
   const [pieceBody, setPieceBody] = useState('');
   const [pieceUrl, setPieceUrl] = useState('');
+  const [pieceSaleStatus, setPieceSaleStatus] = useState<SaleStatus>('not_for_sale');
+  const [piecePriceLabel, setPiecePriceLabel] = useState('');
+  const [pieceMediumOrSize, setPieceMediumOrSize] = useState('');
+  const [piecePaymentUrl, setPiecePaymentUrl] = useState('');
   const [pieceFile, setPieceFile] = useState<File | null>(null);
   const [savingPiece, setSavingPiece] = useState(false);
 
   const backupInputRef = useRef<HTMLInputElement | null>(null);
+
+  const loadInquiriesList = useCallback(async () => {
+    if (!canManageInquiries) return;
+    const ownerUid =
+      source.kind === 'cloud'
+        ? source.authUser?.uid || source.museum.ownerId
+        : source.authUser?.uid || '';
+    const museumId = source.kind === 'cloud' ? source.museum.id : 'museo404';
+    if (!ownerUid) return;
+
+    setInquiriesLoading(true);
+    setInquiriesError(null);
+    try {
+      const list = await fetchOwnerInquiries({
+        museumId,
+        ownerUid,
+        isFlagshipAdmin,
+      });
+      setInquiries(list);
+    } catch (err) {
+      setInquiriesError(
+        err instanceof Error ? err.message : 'No se pudieron cargar las solicitudes de compra.'
+      );
+    } finally {
+      setInquiriesLoading(false);
+    }
+  }, [canManageInquiries, isFlagshipAdmin, source]);
+
+  useEffect(() => {
+    if (view.mode === 'inquiries') {
+      loadInquiriesList();
+    }
+  }, [view.mode, loadInquiriesList]);
 
   const selectIsland = (islandId: string) => {
     const found = visibleIslands.find((i) => i.id === islandId);
@@ -221,14 +349,51 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({ source, onClose }) =
     setPieceType(inferredType);
     setPieceBody(existing?.body || existing?.lines?.join('\n\n') || '');
     setPieceUrl(existing?.url || '');
+    setPieceSaleStatus(existing?.saleStatus || 'not_for_sale');
+    setPiecePriceLabel(existing?.priceLabel || '');
+    setPieceMediumOrSize(existing?.mediumOrSize || '');
+    setPiecePaymentUrl(existing?.paymentUrl || '');
     setPieceFile(null);
     setView({ mode: 'piece', islandId, roomId, pieceId });
   };
 
   const handleSaveAppearance = async () => {
+    let cleanDonation: DonationConfig | undefined;
+    if (canManageDonations) {
+      try {
+        cleanDonation = sanitizeDonationConfig({
+          enabled: donationEnabled,
+          url: donationUrl,
+          platformLabel: donationPlatform,
+          note: donationNote,
+        });
+      } catch (err) {
+        setNotice(err instanceof Error ? err.message : 'Enlace de donación inválido.');
+        return;
+      }
+    }
+
     if (source.kind === 'local') {
       source.onUpdateTheme?.(metaTheme);
-      setNotice('Colores y atmósfera del museo local actualizados.');
+      if (isFlagshipAdmin && source.onSaveFlagshipConfig) {
+        setSavingMeta(true);
+        try {
+          await source.onSaveFlagshipConfig({
+            theme: metaTheme,
+            ...(cleanDonation ? { donationConfig: cleanDonation } : {}),
+            ...(source.flagshipConfig?.pieceCommerce
+              ? { pieceCommerce: source.flagshipConfig.pieceCommerce }
+              : {}),
+          });
+          setNotice('Apariencia, arquitectura y enlace de donación guardados en la nube.');
+        } catch (err) {
+          setNotice(err instanceof Error ? err.message : 'No se pudo guardar en /flagship/config.');
+        } finally {
+          setSavingMeta(false);
+        }
+        return;
+      }
+      setNotice('Colores, siluetas y marcos del museo actualizados.');
       return;
     }
 
@@ -242,14 +407,43 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({ source, onClose }) =
         theme: metaTheme,
         defaultCharacterId: metaCharacter,
         isPublic: metaIsPublic,
+        ...(cleanDonation ? { donationConfig: cleanDonation } : {}),
       });
       source.onSyncMuseum(updated, source.pieces);
-      setNotice('Apariencia, colores e identidad del museo guardados en la nube.');
+      setNotice('Apariencia, donaciones e identidad del museo guardados en la nube.');
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'No se pudo guardar la apariencia.');
     } finally {
       setSavingMeta(false);
     }
+  };
+
+  const handleUpdateInquiry = async (inquiry: PurchaseInquiry, nextStatus: InquiryStatus) => {
+    if (inquiry.status === 'closed') return;
+    setUpdatingInquiryId(inquiry.id);
+    try {
+      await updateInquiryStatus(inquiry.id, nextStatus);
+      setInquiries((prev) =>
+        prev.map((it) => (it.id === inquiry.id ? { ...it, status: nextStatus } : it))
+      );
+      setNotice(`Solicitud de «${inquiry.pieceTitle}» marcada como ${INQUIRY_STATUS_LABELS[nextStatus].toLowerCase()}.`);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'No se pudo actualizar la solicitud.');
+    } finally {
+      setUpdatingInquiryId(null);
+    }
+  };
+
+  const handleDeleteInquiry = (inquiry: PurchaseInquiry) => {
+    setConfirmState({
+      message: `¿Eliminar la solicitud de compra de ${inquiry.buyerName} por «${inquiry.pieceTitle}»?`,
+      confirmLabel: 'Sí, eliminar',
+      onConfirm: async () => {
+        await deletePurchaseInquiry(inquiry.id);
+        setInquiries((prev) => prev.filter((it) => it.id !== inquiry.id));
+        setNotice('Solicitud eliminada.');
+      },
+    });
   };
 
   const handleDeleteEntireCloudMuseum = () => {
@@ -653,6 +847,15 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({ source, onClose }) =
       return;
     }
 
+    const cleanPaymentUrl = piecePaymentUrl.trim();
+    if (cleanPaymentUrl && !/^https?:\/\//i.test(cleanPaymentUrl)) {
+      setNotice('El enlace de pago directo debe comenzar con https:// o http://.');
+      return;
+    }
+
+    const cleanPriceLabel = piecePriceLabel.trim().slice(0, 40);
+    const cleanMediumOrSize = pieceMediumOrSize.trim().slice(0, 120);
+
     setSavingPiece(true);
     try {
       const existing = view.pieceId
@@ -676,9 +879,11 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({ source, onClose }) =
           mediaKey = nextMediaKey;
         }
 
+        const savedPieceId = existing?.id || makeId('piece');
+
         if (isCustom) {
           const newPiece: MuseumPiece = {
-            id: existing?.id || makeId('piece'),
+            id: savedPieceId,
             islandId: view.islandId,
             roomId: view.roomId,
             title,
@@ -698,6 +903,10 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({ source, onClose }) =
             url: pieceUrl.trim(),
             mediaKey,
             custom: true,
+            saleStatus: pieceSaleStatus,
+            priceLabel: cleanPriceLabel,
+            mediumOrSize: cleanMediumOrSize,
+            paymentUrl: cleanPaymentUrl,
           };
 
           const nextCustomItems = existing
@@ -716,12 +925,37 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({ source, onClose }) =
                 subtitle: pieceSubtitle.trim(),
                 body: pieceBody,
                 ...(pieceFile ? { type: pieceType, mediaKey } : {}),
+                saleStatus: pieceSaleStatus,
+                priceLabel: cleanPriceLabel,
+                mediumOrSize: cleanMediumOrSize,
+                paymentUrl: cleanPaymentUrl,
               },
             },
           });
         }
 
-        setNotice(`Pieza «${title}» guardada.`);
+        if (isFlagshipAdmin && source.onSaveFlagshipConfig) {
+          const currentCommerce = { ...(source.flagshipConfig?.pieceCommerce || {}) };
+          currentCommerce[savedPieceId] = {
+            saleStatus: pieceSaleStatus,
+            priceLabel: cleanPriceLabel,
+            mediumOrSize: cleanMediumOrSize,
+            paymentUrl: cleanPaymentUrl,
+          };
+          await source.onSaveFlagshipConfig({
+            theme: source.flagshipConfig?.theme || metaTheme,
+            ...(source.flagshipConfig?.donationConfig
+              ? { donationConfig: source.flagshipConfig.donationConfig }
+              : {}),
+            pieceCommerce: currentCommerce,
+          });
+        }
+
+        setNotice(
+          isFlagshipAdmin
+            ? `Pieza «${title}» guardada y estado de venta publicado.`
+            : `Pieza «${title}» guardada.`
+        );
         openRoom(view.islandId, view.roomId);
         return;
       }
@@ -752,6 +986,10 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({ source, onClose }) =
           url: pieceUrl.trim(),
           mediaDataUrl,
           curatedFrom: existing?.curatedFrom,
+          saleStatus: pieceSaleStatus,
+          priceLabel: cleanPriceLabel,
+          mediumOrSize: cleanMediumOrSize,
+          paymentUrl: cleanPaymentUrl,
         },
         source.pieces.length
       );
@@ -921,6 +1159,21 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({ source, onClose }) =
               <span>Colores y diseño</span>
             </button>
 
+            {canManageInquiries && (
+              <button
+                type="button"
+                onClick={() => setView({ mode: 'inquiries' })}
+                className={`flex shrink-0 items-center justify-center gap-2 border px-3 py-2.5 text-sm font-bold transition-colors ${
+                  view.mode === 'inquiries'
+                    ? 'border-[#f1d17c] bg-[#b25f37] text-[#fff9e8]'
+                    : 'border-[#f1d17c]/45 bg-[#0f3644] text-[#f4d47d] hover:bg-[#174d58]'
+                }`}
+              >
+                <ShoppingBag className="h-4 w-4" />
+                <span>Solicitudes</span>
+              </button>
+            )}
+
             <button
               type="button"
               onClick={() => {
@@ -941,7 +1194,10 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({ source, onClose }) =
 
             {visibleIslands.map((isl) => {
               const isSelected =
-                view.mode !== 'new-island' && view.mode !== 'appearance' && view.islandId === isl.id;
+                view.mode !== 'new-island' &&
+                view.mode !== 'appearance' &&
+                view.mode !== 'inquiries' &&
+                view.islandId === isl.id;
               const rCount = getRooms(isl.id).length;
               const pCount = getIslandPiecesCount(isl.id);
               return (
@@ -1159,7 +1415,129 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({ source, onClose }) =
                       </select>
                     </div>
                   </div>
+
+                  {/* Personalización expresiva: Siluetas y Marcos */}
+                  <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div className="border border-white/15 bg-white/[0.04] p-3.5">
+                      <label className="mb-1.5 block text-xs font-semibold text-[#c7ded2]">
+                        Arquitectura de las islas (3D y Mapa)
+                      </label>
+                      <select
+                        value={metaTheme.islandStyle || 'cliffs'}
+                        onChange={(e) =>
+                          setMetaTheme((t) => ({
+                            ...t,
+                            islandStyle: e.target.value as IslandShapeStyle,
+                          }))
+                        }
+                        className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-sm text-[#183b42]"
+                      >
+                        <option value="cliffs">Acantilado clásico</option>
+                        <option value="terraced">Terrazas escalonadas</option>
+                        <option value="floating">Islas flotantes con aura</option>
+                      </select>
+                    </div>
+                    <div className="border border-white/15 bg-white/[0.04] p-3.5">
+                      <label className="mb-1.5 block text-xs font-semibold text-[#c7ded2]">
+                        Estilo de marcos expositivos
+                      </label>
+                      <select
+                        value={metaTheme.frameStyle || 'archival'}
+                        onChange={(e) =>
+                          setMetaTheme((t) => ({
+                            ...t,
+                            frameStyle: e.target.value as FrameStyle,
+                          }))
+                        }
+                        className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-sm text-[#183b42]"
+                      >
+                        <option value="archival">Archivo clásico (turquesa y oro)</option>
+                        <option value="ornate">Marco de galería dorado</option>
+                        <option value="minimal">Contemporáneo mínimo</option>
+                      </select>
+                    </div>
+                  </div>
                 </div>
+
+                {/* Donaciones por enlace directo propio */}
+                {canManageDonations && (
+                  <div className="border border-[#f1d17c]/35 bg-[#07222d] p-4 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Heart className="h-4 w-4 text-[#f4d47d]" />
+                        <h4 className="font-pixel text-[10px] text-[#f4d47d]">
+                          DONACIONES Y APOYO DIRECTO
+                        </h4>
+                      </div>
+                      <label className="flex items-center gap-2 text-xs text-[#e1f4e9]">
+                        <input
+                          type="checkbox"
+                          checked={donationEnabled}
+                          onChange={(e) => setDonationEnabled(e.target.checked)}
+                          className="h-4 w-4 accent-[#f4d47d]"
+                        />
+                        <span>Mostrar botón de donación en este museo</span>
+                      </label>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                          Plataforma
+                        </label>
+                        <div className="mb-2 flex flex-wrap gap-1.5">
+                          {['PayPal', 'Ko-fi', 'Mercado Pago', 'Otro'].map((plat) => (
+                            <button
+                              key={plat}
+                              type="button"
+                              onClick={() => setDonationPlatform(plat)}
+                              className={`border px-2.5 py-1 text-xs ${
+                                donationPlatform === plat
+                                  ? 'border-[#f4d47d] bg-[#bd7544] font-semibold text-[#fff9e8]'
+                                  : 'border-white/20 bg-white/5 text-[#cfe5dc] hover:bg-white/10'
+                              }`}
+                            >
+                              {plat}
+                            </button>
+                          ))}
+                        </div>
+                        <input
+                          value={donationPlatform}
+                          maxLength={40}
+                          onChange={(e) => setDonationPlatform(e.target.value)}
+                          placeholder="PayPal, Ko-fi, Mercado Pago..."
+                          className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-sm text-[#183b42]"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                          Enlace directo (https://...)
+                        </label>
+                        <input
+                          type="url"
+                          value={donationUrl}
+                          maxLength={1000}
+                          onChange={(e) => setDonationUrl(e.target.value)}
+                          placeholder="https://paypal.me/tuusuario o https://ko-fi.com/..."
+                          className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-sm text-[#183b42]"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                          Nota breve de agradecimiento ({donationNote.length}/200)
+                        </label>
+                        <textarea
+                          rows={2}
+                          maxLength={200}
+                          value={donationNote}
+                          onChange={(e) => setDonationNote(e.target.value)}
+                          placeholder="Ej. Tu aporte ayuda a mantener este museo gratuito y financiar nuevas exposiciones."
+                          className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-sm text-[#183b42]"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div>
                   <button
@@ -1171,6 +1549,153 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({ source, onClose }) =
                     {savingMeta ? 'Guardando...' : 'Guardar colores y diseño'}
                   </button>
                 </div>
+              </div>
+            )}
+
+            {view.mode === 'inquiries' && (
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="font-pixel text-[10px] leading-relaxed text-[#f4d47d]">
+                      SOLICITUDES DE COMPRA Y RESERVA
+                    </h3>
+                    <p className="mt-1 text-sm text-[#a9c7bc]">
+                      Solo tú puedes leer los datos de contacto enviados desde tus obras en venta.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={inquiriesLoading}
+                    onClick={loadInquiriesList}
+                    className="inline-flex items-center gap-1.5 border border-[#6e9a91] bg-[#174653] px-3 py-1.5 text-xs text-[#eff4dd] hover:bg-[#246975] disabled:opacity-60"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${inquiriesLoading ? 'animate-spin' : ''}`} />
+                    <span>Actualizar</span>
+                  </button>
+                </div>
+
+                {inquiriesError && (
+                  <p className="border border-[#bd7967] bg-[#603d3d]/60 px-3 py-2 text-xs text-[#ffd5c7]">
+                    {inquiriesError}
+                  </p>
+                )}
+
+                {inquiriesLoading && inquiries.length === 0 ? (
+                  <p className="py-8 text-center text-sm text-[#a9c7bc]">
+                    Cargando solicitudes de compra...
+                  </p>
+                ) : inquiries.length === 0 ? (
+                  <div className="border border-white/15 bg-white/[0.04] p-6 text-center text-sm text-[#b9d6cc]">
+                    Aún no hay solicitudes de compra registradas para este museo. Marca tus pinturas u obras como «En venta» desde cada sala para activar el formulario de adquisición.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {inquiries.map((inq) => {
+                      const isClosed = inq.status === 'closed';
+                      const isUpdating = updatingInquiryId === inq.id;
+                      return (
+                        <article
+                          key={inq.id}
+                          className="border border-[#e0d7a5]/25 bg-[#07222d] p-4 space-y-2.5"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span
+                                  className={`border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider ${
+                                    inq.status === 'pending'
+                                      ? 'border-[#f4d47d] bg-[#6d451f] text-[#fff3c7]'
+                                      : inq.status === 'contacted'
+                                        ? 'border-[#72c6c1] bg-[#144c58] text-[#e7fbf7]'
+                                        : 'border-white/25 bg-white/10 text-[#c7ded2]'
+                                  }`}
+                                >
+                                  {INQUIRY_STATUS_LABELS[inq.status]}
+                                </span>
+                                <strong className="text-base font-bold text-[#fff9e8]">
+                                  {inq.pieceTitle}
+                                </strong>
+                                <span className="text-xs font-semibold text-[#f4d47d] tabular-nums">
+                                  ({inq.priceLabel})
+                                </span>
+                              </div>
+                              <p className="mt-1 text-xs text-[#a8c8bc] tabular-nums">
+                                {new Date(inq.createdAt).toLocaleString('es-MX', {
+                                  dateStyle: 'medium',
+                                  timeStyle: 'short',
+                                })}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteInquiry(inq)}
+                              className="inline-flex items-center gap-1 border border-[#bd7967] bg-[#533b3a] px-2.5 py-1 text-xs text-[#ffd5c7] hover:bg-[#6a4846]"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                              <span>Eliminar</span>
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 gap-2 border-y border-white/10 py-2.5 text-sm sm:grid-cols-3">
+                            <div>
+                              <span className="block text-[11px] uppercase tracking-wider text-[#8cb5ab]">
+                                Solicitante
+                              </span>
+                              <span className="font-semibold text-[#fff9e8]">{inq.buyerName}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[11px] uppercase tracking-wider text-[#8cb5ab]">
+                                Contacto directo
+                              </span>
+                              <span className="font-semibold text-[#75e4dc] break-all">
+                                {inq.buyerContact}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="block text-[11px] uppercase tracking-wider text-[#8cb5ab]">
+                                Ciudad / Envío
+                              </span>
+                              <span className="text-[#e1f4e9]">
+                                {inq.shippingLocation || 'No especificado'}
+                              </span>
+                            </div>
+                          </div>
+
+                          {inq.message && (
+                            <p className="whitespace-pre-line text-sm leading-relaxed text-[#dbece4]">
+                              “{inq.message}”
+                            </p>
+                          )}
+
+                          <div className="flex flex-wrap items-center gap-2 pt-1">
+                            <span className="text-xs text-[#9fc4b8]">Estado:</span>
+                            {(['pending', 'contacted', 'closed'] as InquiryStatus[]).map((st) => (
+                              <button
+                                key={st}
+                                type="button"
+                                disabled={isClosed || isUpdating || inq.status === st}
+                                onClick={() => handleUpdateInquiry(inq, st)}
+                                className={`inline-flex items-center gap-1 border px-2.5 py-1 text-xs transition-colors ${
+                                  inq.status === st
+                                    ? 'border-[#f4d47d] bg-[#1d6873] font-bold text-[#fff9e8]'
+                                    : 'border-white/25 bg-white/5 text-[#d7ebe2] hover:bg-white/15 disabled:opacity-45'
+                                }`}
+                              >
+                                {inq.status === st && <CheckCircle2 className="h-3 w-3" />}
+                                <span>{INQUIRY_STATUS_LABELS[st]}</span>
+                              </button>
+                            ))}
+                            {isClosed && (
+                              <span className="text-[11px] text-[#9fc4b8]">
+                                Solicitud cerrada (bloqueada ante cambios).
+                              </span>
+                            )}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
 
@@ -1534,9 +2059,30 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({ source, onClose }) =
                       className="flex flex-wrap items-center justify-between gap-3 border border-[#e0d7a5]/20 bg-white/[0.045] px-4 py-2.5"
                     >
                       <div className="min-w-0 flex-1">
-                        <strong className="block truncate text-base font-semibold text-[#fff9e8]">
-                          {item.title}
-                        </strong>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <strong className="truncate text-base font-semibold text-[#fff9e8]">
+                            {item.title}
+                          </strong>
+                          {item.saleStatus && item.saleStatus !== 'not_for_sale' && (
+                            <span
+                              className={`border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider tabular-nums ${
+                                item.saleStatus === 'for_sale'
+                                  ? 'border-[#72c6c1] bg-[#174653] text-[#e7fbf7]'
+                                  : item.saleStatus === 'reserved'
+                                    ? 'border-[#f4d47d] bg-[#6d451f] text-[#fff3c7]'
+                                    : 'border-white/30 bg-white/10 text-[#d0e6da]'
+                              }`}
+                            >
+                              {item.saleStatus === 'for_sale'
+                                ? item.priceLabel
+                                  ? `EN VENTA · ${item.priceLabel}`
+                                  : 'EN VENTA'
+                                : item.saleStatus === 'reserved'
+                                  ? 'RESERVADA'
+                                  : 'VENDIDA'}
+                            </span>
+                          )}
+                        </div>
                         <small className="block truncate text-xs text-[#a8c8bc]">
                           {item.subtitle || item.kind}
                           {item.curatedFrom
@@ -1676,12 +2222,79 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({ source, onClose }) =
                       Texto, reseña o descripción
                     </label>
                     <textarea
-                      rows={6}
+                      rows={5}
                       value={pieceBody}
                       onChange={(e) => setPieceBody(e.target.value)}
                       placeholder="Escribe o pega aquí el contenido de la pieza..."
                       className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
                     />
+                  </div>
+
+                  {/* Venta de obra / Disponibilidad */}
+                  <div className="sm:col-span-2 border border-[#f1d17c]/30 bg-[#07222d] p-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <ShoppingBag className="h-4 w-4 text-[#f4d47d]" />
+                      <h4 className="font-pixel text-[10px] text-[#f4d47d]">
+                        VENTA DE OBRA / DISPONIBILIDAD
+                      </h4>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                          Estado comercial
+                        </label>
+                        <select
+                          value={pieceSaleStatus}
+                          onChange={(e) => setPieceSaleStatus(e.target.value as SaleStatus)}
+                          className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-sm text-[#183b42]"
+                        >
+                          {(Object.entries(SALE_STATUS_LABELS) as [SaleStatus, string][]).map(
+                            ([k, lbl]) => (
+                              <option key={k} value={k}>
+                                {lbl}
+                              </option>
+                            )
+                          )}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                          Precio visible (máx. 40 caracteres)
+                        </label>
+                        <input
+                          value={piecePriceLabel}
+                          maxLength={40}
+                          onChange={(e) => setPiecePriceLabel(e.target.value)}
+                          placeholder="Ej. $3,200 MXN o $180 USD"
+                          className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-sm text-[#183b42]"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                          Técnica, formato o medidas
+                        </label>
+                        <input
+                          value={pieceMediumOrSize}
+                          maxLength={120}
+                          onChange={(e) => setPieceMediumOrSize(e.target.value)}
+                          placeholder="Ej. Óleo sobre tela · 80 × 100 cm"
+                          className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-sm text-[#183b42]"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                          Enlace de pago directo (opcional, https://...)
+                        </label>
+                        <input
+                          type="url"
+                          value={piecePaymentUrl}
+                          maxLength={1000}
+                          onChange={(e) => setPiecePaymentUrl(e.target.value)}
+                          placeholder="https://mpago.la/... o PayPal / Stripe"
+                          className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-sm text-[#183b42]"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
 

@@ -33,7 +33,7 @@ export interface CircleCollider {
 
 export interface ExhibitTrigger {
   id: string;
-  kind: 'island' | 'piece';
+  kind: 'island' | 'piece' | 'guestbook' | 'support';
   islandId: string;
   label: string;
   sublabel: string;
@@ -229,6 +229,24 @@ export function buildArchipelagoWorld3D(
       metalness: 0.45,
     })
   );
+  const guestbookGlowMat = trackMat(
+    new THREE.MeshStandardMaterial({
+      color: 0xa4f5d2,
+      emissive: 0x3ec48f,
+      emissiveIntensity: 0.65,
+      roughness: 0.25,
+      metalness: 0.35,
+    })
+  );
+  const supportGlowMat = trackMat(
+    new THREE.MeshStandardMaterial({
+      color: 0xffa67a,
+      emissive: 0xe3623e,
+      emissiveIntensity: 0.65,
+      roughness: 0.25,
+      metalness: 0.35,
+    })
+  );
 
   const grassMat = trackMat(
     new THREE.MeshStandardMaterial({ map: textures.grass, roughness: 0.82, metalness: 0.02 })
@@ -401,7 +419,7 @@ export function buildArchipelagoWorld3D(
     label: string,
     sublabel: string,
     islandId: string,
-    kind: 'island' | 'piece',
+    kind: ExhibitTrigger['kind'],
     piece?: MuseumPiece
   ) {
     const ped = new THREE.Group();
@@ -419,10 +437,16 @@ export function buildArchipelagoWorld3D(
     const cap = new THREE.Mesh(trackGeo(new THREE.BoxGeometry(0.92, 0.16, 0.92)), goldMat);
     cap.position.y = 1.16;
 
-    const beacon = new THREE.Mesh(
-      trackGeo(new THREE.OctahedronGeometry(0.36, 0)),
-      kind === 'island' ? cyanGlowMat : beaconMatBase
-    );
+    const beaconMat =
+      kind === 'island'
+        ? cyanGlowMat
+        : kind === 'guestbook'
+          ? guestbookGlowMat
+          : kind === 'support'
+            ? supportGlowMat
+            : beaconMatBase;
+
+    const beacon = new THREE.Mesh(trackGeo(new THREE.OctahedronGeometry(0.36, 0)), beaconMat);
     beacon.position.y = 1.95;
     beacon.castShadow = true;
 
@@ -432,7 +456,7 @@ export function buildArchipelagoWorld3D(
     colliders.push({ x, z, radius: 0.62 });
 
     triggers.push({
-      id: piece ? piece.id : `island-${islandId}`,
+      id: piece ? piece.id : `${kind}-${islandId}`,
       kind,
       islandId,
       label,
@@ -446,6 +470,8 @@ export function buildArchipelagoWorld3D(
     });
   }
 
+  const islandStyle = theme?.islandStyle || 'cliffs';
+
   // Build each island terrain, caminitos, architecture, and pedestals
   for (const node of islandNodes) {
     const { island, cx, cz, radius } = node;
@@ -456,23 +482,70 @@ export function buildArchipelagoWorld3D(
     const topMat = isDesert ? sandMat : isIce ? iceMat : grassMat;
     const pathMat = isDesert ? desertPathMat : isIce ? icePathMat : cobbleMat;
 
-    // Island cliff body + sea foam collar
-    const cliff = new THREE.Mesh(
-      trackGeo(new THREE.CylinderGeometry(radius, radius * 0.78, DECK_Y + 1.8, 12)),
-      cliffMat
-    );
-    cliff.position.set(cx, (DECK_Y - 1.8) * 0.5, cz);
-    cliff.receiveShadow = true;
-    cliff.castShadow = true;
-    group.add(cliff);
+    if (islandStyle === 'floating') {
+      // Levitating stone shelf + inverted tapered underside spire + cyan energy halo
+      const upperCliff = new THREE.Mesh(
+        trackGeo(new THREE.CylinderGeometry(radius, radius * 0.88, 1.15, 10)),
+        cliffMat
+      );
+      upperCliff.position.set(cx, DECK_Y - 0.58, cz);
+      upperCliff.receiveShadow = true;
+      upperCliff.castShadow = true;
+      group.add(upperCliff);
 
-    const foam = new THREE.Mesh(
-      trackGeo(new THREE.RingGeometry(radius * 0.84, radius * 1.06, 20)),
-      foamRingMat
-    );
-    foam.rotation.x = -Math.PI / 2;
-    foam.position.set(cx, 0.05, cz);
-    group.add(foam);
+      const underSpire = new THREE.Mesh(
+        trackGeo(new THREE.ConeGeometry(radius * 0.82, 2.8, 8)),
+        cliffMat
+      );
+      underSpire.rotation.x = Math.PI;
+      underSpire.position.set(cx, DECK_Y - 2.55, cz);
+      underSpire.castShadow = true;
+      group.add(underSpire);
+
+      const halo = new THREE.Mesh(
+        trackGeo(new THREE.TorusGeometry(radius * 0.9, 0.14, 6, 24)),
+        cyanGlowMat
+      );
+      halo.rotation.x = Math.PI / 2;
+      halo.position.set(cx, 0.38, cz);
+      group.add(halo);
+    } else {
+      // Island cliff body + sea foam collar
+      const cliff = new THREE.Mesh(
+        trackGeo(new THREE.CylinderGeometry(radius, radius * 0.78, DECK_Y + 1.8, 12)),
+        cliffMat
+      );
+      cliff.position.set(cx, (DECK_Y - 1.8) * 0.5, cz);
+      cliff.receiveShadow = true;
+      cliff.castShadow = true;
+      group.add(cliff);
+
+      if (islandStyle === 'terraced') {
+        const terrace1 = new THREE.Mesh(
+          trackGeo(new THREE.CylinderGeometry(radius * 1.07, radius * 1.05, 0.55, 12)),
+          stoneTrimMat
+        );
+        terrace1.position.set(cx, DECK_Y - 0.62, cz);
+        terrace1.receiveShadow = true;
+        group.add(terrace1);
+
+        const terrace2 = new THREE.Mesh(
+          trackGeo(new THREE.CylinderGeometry(radius * 1.15, radius * 1.12, 0.62, 12)),
+          cliffMat
+        );
+        terrace2.position.set(cx, DECK_Y - 1.2, cz);
+        terrace2.receiveShadow = true;
+        group.add(terrace2);
+      }
+
+      const foam = new THREE.Mesh(
+        trackGeo(new THREE.RingGeometry(radius * 0.84, radius * 1.06, 20)),
+        foamRingMat
+      );
+      foam.rotation.x = -Math.PI / 2;
+      foam.position.set(cx, 0.05, cz);
+      group.add(foam);
+    }
 
     // Top turf deck
     const topDeck = new THREE.Mesh(
@@ -632,6 +705,27 @@ export function buildArchipelagoWorld3D(
       addTree(cx - 7.2, cz + 6.8, 1.0, 0x529b5e);
       addLanternPost(cx + 4.4, DECK_Y, cz + 4.4);
       addLanternPost(cx - 4.4, DECK_Y, cz + 4.4);
+
+      if (node === hubNode) {
+        addPathStrip(cx, cz + 6.4, cx - 4.2, cz + 6.4, 1.35, pathMat);
+        addPathStrip(cx, cz + 6.4, cx + 4.2, cz + 6.4, 1.35, pathMat);
+        addPedestal(
+          cx - 4.2,
+          cz + 6.4,
+          'Libro de visitas · Recepción',
+          'Deja una nota o firma para el museo',
+          island.id,
+          'guestbook'
+        );
+        addPedestal(
+          cx + 4.2,
+          cz + 6.4,
+          'Apoyar al proyecto',
+          'Donaciones y aporte comunitario',
+          island.id,
+          'support'
+        );
+      }
     } else if (island.biome === 'forest') {
       // Bosque Lingüinal: Ancient stone archive shrine + dense trees framing the path
       const shrine = new THREE.Group();

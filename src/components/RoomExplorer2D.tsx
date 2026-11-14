@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Sun, Palette, Volume2, VolumeX, HelpCircle } from 'lucide-react';
+import { ArrowLeft, BookOpen, Sun, Palette, Volume2, VolumeX, HelpCircle } from 'lucide-react';
 import { retroAudio } from '../game/audio';
 import {
   PlayableRoom,
@@ -25,6 +25,7 @@ interface RoomExplorer2DProps {
   isModalOpen: boolean;
   onOpenPiece: (piece: MuseumPiece) => void;
   onOpenSign: (title: string, content: string) => void;
+  onOpenGuestbook?: (island: Island, room: Room) => void;
   onExitToArchipelago: () => void;
 }
 
@@ -55,6 +56,7 @@ export const RoomExplorer2D: React.FC<RoomExplorer2DProps> = ({
   isModalOpen,
   onOpenPiece,
   onOpenSign,
+  onOpenGuestbook,
   onExitToArchipelago,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -158,7 +160,13 @@ export const RoomExplorer2D: React.FC<RoomExplorer2DProps> = ({
 
     if (target.kind === 'interactive' && target.interactive) {
       const item = target.interactive;
-      if (item.type === 'sign' && item.signText) {
+      if (item.type === 'guestbook') {
+        retroAudio.playInteract();
+        const activeRoomObj = rooms.find((r) => r.id === currentRoomId) || rooms[0];
+        if (activeRoomObj) {
+          onOpenGuestbook?.(island, activeRoomObj);
+        }
+      } else if (item.type === 'sign' && item.signText) {
         retroAudio.playInteract();
         onOpenSign(item.title, item.signText);
       } else if (item.piece) {
@@ -334,6 +342,8 @@ export const RoomExplorer2D: React.FC<RoomExplorer2DProps> = ({
           spriteRenderer.drawVoxelArcade(ctx, item.x, item.y, tick);
         } else if (item.type === 'sign') {
           spriteRenderer.drawVoxelSign(ctx, item.x, item.y);
+        } else if (item.type === 'guestbook') {
+          spriteRenderer.drawVoxelGuestbook(ctx, item.x, item.y, tick);
         }
         if (nearby?.kind === 'interactive' && nearby.interactive?.id === item.id) {
           spriteRenderer.renderSparkle(ctx, item.x, item.y - 6, tick);
@@ -402,6 +412,7 @@ export const RoomExplorer2D: React.FC<RoomExplorer2DProps> = ({
         else if (nearby.interactive?.type === 'painting') aLabel = 'VER';
         else if (nearby.interactive?.type === 'arcade') aLabel = 'JUGAR';
         else if (nearby.interactive?.type === 'link_item') aLabel = 'LINK';
+        else if (nearby.interactive?.type === 'guestbook') aLabel = 'FIRMAR';
         else aLabel = 'LEER';
       }
       ctx.fillStyle = PALETTE.NEGRO;
@@ -782,6 +793,19 @@ export const RoomExplorer2D: React.FC<RoomExplorer2DProps> = ({
         )}
 
         <div className="flex items-center gap-2 shrink-0">
+          {onOpenGuestbook && (
+            <button
+              type="button"
+              onClick={() => {
+                const activeRoomObj = rooms.find((r) => r.id === currentRoomId) || rooms[0];
+                if (activeRoomObj) onOpenGuestbook(island, activeRoomObj);
+              }}
+              className="inline-flex items-center gap-1.5 border border-[#f2d17b] bg-[#b25f37] px-2.5 py-1.5 text-xs font-semibold text-[#fff9e6] hover:bg-[#174d58] whitespace-nowrap"
+            >
+              <BookOpen className="h-3.5 w-3.5 text-[#f4d47d]" />
+              <span>Visitas</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => {

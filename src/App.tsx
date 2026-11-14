@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import {
+  BookOpen,
   Box,
   Compass,
+  Heart,
   HelpCircle,
   LogIn,
   LogOut,
@@ -18,15 +20,22 @@ import { ArchipelagoMap } from './components/ArchipelagoMap';
 import { CharacterSelectorModal } from './components/CharacterSelectorModal';
 import { ContentModal, ModalPayload } from './components/ContentModal';
 import { CreateMuseumModal } from './components/CreateMuseumModal';
+import { GuestbookModal } from './components/GuestbookModal';
 import { IslandDrawer } from './components/IslandDrawer';
 import { MuseumDirectoryModal } from './components/MuseumDirectoryModal';
 import { EditorSource, MuseumEditor } from './components/MuseumEditor';
 import { RoomExplorer2D } from './components/RoomExplorer2D';
 import { SharePieceModal } from './components/SharePieceModal';
+import { SupportProjectModal } from './components/SupportProjectModal';
 import { getCharacterProfile } from './data/characters';
 import { FOUNTAIN_QUOTES } from './data/initialContent';
 import { CATEGORY_META, DEFAULT_MUSEUM_THEME } from './data/themes';
 import { auth } from './firebase/client';
+import {
+  fetchFlagshipCloudConfig,
+  isFlagshipAdminUser,
+  saveFlagshipCloudConfig,
+} from './firebase/interactions';
 import {
   fetchMuseumById,
   fetchMuseumPieces,
@@ -49,6 +58,7 @@ import {
 import {
   CharacterId,
   CloudMuseum,
+  FlagshipConfig,
   Island,
   MuseumPiece,
   MuseumState,
@@ -63,6 +73,7 @@ type ActiveMuseum =
 const CHAR_STORAGE_KEY = 'museo404_character_id';
 const CHAR_PICKED_KEY = 'museo404_character_picked';
 const FLAGSHIP_THEME_KEY = 'museo404_flagship_theme_v1';
+const FLAGSHIP_CONFIG_KEY = 'museo404_flagship_config_v1';
 
 function loadInitialCharacter(): CharacterId {
   try {
@@ -94,11 +105,30 @@ function loadInitialFlagshipTheme(): MuseumThemeConfig {
   return DEFAULT_MUSEUM_THEME;
 }
 
+function loadInitialFlagshipConfig(): FlagshipConfig {
+  try {
+    const rawCfg = localStorage.getItem(FLAGSHIP_CONFIG_KEY);
+    if (rawCfg) {
+      const parsed = JSON.parse(rawCfg) as Partial<FlagshipConfig>;
+      if (parsed && parsed.theme && typeof parsed.theme.skyColor === 'string') {
+        return {
+          ...parsed,
+          theme: { ...DEFAULT_MUSEUM_THEME, ...parsed.theme },
+        };
+      }
+    }
+  } catch {
+    // ignorar
+  }
+  return { theme: loadInitialFlagshipTheme() };
+}
+
 export default function App() {
   const [museumState, setMuseumState] = useState<MuseumState>(() => loadMuseumState());
-  const [flagshipTheme, setFlagshipTheme] = useState<MuseumThemeConfig>(() =>
-    loadInitialFlagshipTheme()
+  const [flagshipConfig, setFlagshipConfig] = useState<FlagshipConfig>(() =>
+    loadInitialFlagshipConfig()
   );
+  const flagshipTheme = flagshipConfig.theme;
 
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [publicMuseums, setPublicMuseums] = useState<CloudMuseum[]>([]);
@@ -116,11 +146,20 @@ export default function App() {
   const [mode2D, setMode2D] = useState<{ islandId: string; roomId: string } | null>(null);
 
   const [editorSource, setEditorSource] = useState<EditorSource | null>(null);
+  const [editorInitialViewMode, setEditorInitialViewMode] = useState<
+    'appearance' | 'inquiries' | undefined
+  >(undefined);
   const [directoryOpen, setDirectoryOpen] = useState(false);
   const [createMuseumOpen, setCreateMuseumOpen] = useState(false);
   const [characterModalOpen, setCharacterModalOpen] = useState(false);
   const [shareTargetPiece, setShareTargetPiece] = useState<MuseumPiece | null>(null);
   const [modalPayload, setModalPayload] = useState<ModalPayload | null>(null);
+  const [guestbookContext, setGuestbookContext] = useState<{
+    islandId: string;
+    roomId: string;
+    scopeLabel: string;
+  } | null>(null);
+  const [supportModalOpen, setSupportModalOpen] = useState(false);
 
   const [bgmActive, setBgmActive] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -140,14 +179,35 @@ export default function App() {
     saveMuseumState(next);
   }, []);
 
-  const updateFlagshipTheme = useCallback((next: MuseumThemeConfig) => {
-    setFlagshipTheme(next);
+  const persistLocalFlagshipConfig = useCallback((next: FlagshipConfig) => {
+    setFlagshipConfig(next);
     try {
-      localStorage.setItem(FLAGSHIP_THEME_KEY, JSON.stringify(next));
+      localStorage.setItem(FLAGSHIP_CONFIG_KEY, JSON.stringify(next));
+      localStorage.setItem(FLAGSHIP_THEME_KEY, JSON.stringify(next.theme));
     } catch {
       // ignorar
     }
   }, []);
+
+  const updateFlagshipTheme = useCallback(
+    (nextTheme: MuseumThemeConfig) => {
+      persistLocalFlagshipConfig({ ...flagshipConfig, theme: nextTheme });
+    },
+    [flagshipConfig, persistLocalFlagshipConfig]
+  );
+
+  const handleSaveFlagshipConfig = useCallback(
+    async (next: FlagshipConfig) => {
+      const saved = await saveFlagshipCloudConfig(next);
+      persistLocalFlagshipConfig(saved);
+      setEditorSource((prev) =>
+        prev && prev.kind === 'local'
+          ? { ...prev, theme: saved.theme, flagshipConfig: saved }
+          : prev
+      );
+    },
+    [persistLocalFlagshipConfig]
+  );
 
   const refreshDirectory = useCallback(async (userOverride?: User | null) => {
     setDirectoryLoading(true);
@@ -173,7 +233,12 @@ export default function App() {
 
   useEffect(() => {
     refreshDirectory(null);
-  }, [refreshDirectory]);
+    fetchFlagshipCloudConfig().then((remote) => {
+      if (remote) {
+        persistLocalFlagshipConfig(remote);
+      }
+    });
+  }, [refreshDirectory, persistLocalFlagshipConfig]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -307,6 +372,22 @@ export default function App() {
     [activeMuseum, museumState]
   );
 
+  const mergeFlagshipPieceCommerce = useCallback(
+    (piece: MuseumPiece): MuseumPiece => {
+      const remoteComm = flagshipConfig.pieceCommerce?.[piece.id];
+      if (!remoteComm) return piece;
+      const localOv = museumState.overrides[piece.id];
+      return {
+        ...piece,
+        saleStatus: localOv?.saleStatus ?? remoteComm.saleStatus,
+        priceLabel: localOv?.priceLabel ?? remoteComm.priceLabel,
+        mediumOrSize: localOv?.mediumOrSize ?? remoteComm.mediumOrSize,
+        paymentUrl: localOv?.paymentUrl ?? remoteComm.paymentUrl,
+      };
+    },
+    [flagshipConfig.pieceCommerce, museumState.overrides]
+  );
+
   const getActivePiecesForRoom = useCallback(
     (islandId: string, roomId: string): MuseumPiece[] => {
       if (activeMuseum.kind === 'cloud') {
@@ -314,9 +395,9 @@ export default function App() {
           (p) => p.islandId === islandId && p.roomId === roomId
         );
       }
-      return getPiecesForRoom(museumState, islandId, roomId);
+      return getPiecesForRoom(museumState, islandId, roomId).map(mergeFlagshipPieceCommerce);
     },
-    [activeMuseum, museumState]
+    [activeMuseum, museumState, mergeFlagshipPieceCommerce]
   );
 
   const roomCounts = useMemo(() => {
@@ -353,13 +434,13 @@ export default function App() {
         const rooms = getRoomsForIsland(museumState, isl.id);
         const list: MuseumPiece[] = [];
         for (const r of rooms) {
-          list.push(...getPiecesForRoom(museumState, isl.id, r.id));
+          list.push(...getPiecesForRoom(museumState, isl.id, r.id).map(mergeFlagshipPieceCommerce));
         }
         out[isl.id] = list;
       }
     }
     return out;
-  }, [islands, activeMuseum, museumState]);
+  }, [islands, activeMuseum, museumState, mergeFlagshipPieceCommerce]);
 
   useEffect(() => {
     if (selectedIslandId && !islands.some((i) => i.id === selectedIslandId)) {
@@ -470,7 +551,9 @@ export default function App() {
       directoryOpen ||
       createMuseumOpen ||
       characterModalOpen ||
-      shareTargetPiece
+      shareTargetPiece ||
+      guestbookContext ||
+      supportModalOpen
   );
 
   useEffect(() => {
@@ -506,20 +589,28 @@ export default function App() {
     return out;
   }, [active2DIsland, active2DRooms, getActivePiecesForRoom]);
 
+  const isFlagshipAdmin = isFlagshipAdminUser(authUser);
   const isOwnerOfActiveCloud =
     activeMuseum.kind === 'cloud' && authUser?.uid === activeMuseum.museum.ownerId;
   const canEditActiveMuseum = activeMuseum.kind === 'flagship' || isOwnerOfActiveCloud;
+  const canModerateActiveGuestbook =
+    activeMuseum.kind === 'flagship' ? isFlagshipAdmin : isOwnerOfActiveCloud;
 
   const activeMuseumId = activeMuseum.kind === 'cloud' ? activeMuseum.museum.id : 'museo404';
   const activeMuseumTitle =
     activeMuseum.kind === 'cloud' ? activeMuseum.museum.title : 'MUSEO 404 · siNOMBRE';
   const activeMuseumAuthor =
     activeMuseum.kind === 'cloud' ? activeMuseum.museum.authorName : 'Colección Original';
+  const activeMuseumIsPublic =
+    activeMuseum.kind === 'cloud' ? activeMuseum.museum.isPublic : true;
+  const activeMuseumOwnerId =
+    activeMuseum.kind === 'cloud' ? activeMuseum.museum.ownerId : 'museo404';
 
   const currentCharProfile = getCharacterProfile(characterId);
 
-  const openEditorForCurrentMuseum = () => {
+  const openEditorForCurrentMuseum = (initialView?: 'appearance' | 'inquiries') => {
     setSelectedIslandId(null);
+    setEditorInitialViewMode(initialView);
     if (activeMuseum.kind === 'flagship') {
       setEditorSource({
         kind: 'local',
@@ -527,12 +618,17 @@ export default function App() {
         onUpdateState: updateState,
         theme: flagshipTheme,
         onUpdateTheme: updateFlagshipTheme,
+        flagshipConfig,
+        onSaveFlagshipConfig: handleSaveFlagshipConfig,
+        isFlagshipAdmin,
+        authUser,
       });
     } else if (isOwnerOfActiveCloud) {
       setEditorSource({
         kind: 'cloud',
         museum: activeMuseum.museum,
         pieces: activeMuseum.pieces,
+        authUser,
         onSyncMuseum: (nextMuseum, nextPieces) => {
           setActiveMuseum({ kind: 'cloud', museum: nextMuseum, pieces: nextPieces });
           setEditorSource((prev) =>
@@ -653,10 +749,34 @@ export default function App() {
             <span className="hidden xl:inline">AYUDA</span>
           </button>
 
+          <button
+            type="button"
+            onClick={() =>
+              setGuestbookContext({
+                islandId: 'patio',
+                roomId: 'reception',
+                scopeLabel: 'Recepción · Patio 404',
+              })
+            }
+            className="font-pixel inline-flex items-center gap-1.5 border-2 border-[#7fd6cc] bg-[#053143]/85 px-3 py-2.5 text-[9px] text-[#fff9e6] shadow-[0_4px_0_rgba(3,35,48,0.36)] transition-transform hover:-translate-y-0.5 hover:bg-[#084d5b] whitespace-nowrap"
+          >
+            <BookOpen className="h-3.5 w-3.5 text-[#f4d47d]" />
+            <span className="hidden sm:inline">VISITAS</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSupportModalOpen(true)}
+            className="font-pixel inline-flex items-center gap-1.5 border-2 border-[#f2d17b] bg-[#8f432b]/90 px-3 py-2.5 text-[9px] text-[#fff9e6] shadow-[0_4px_0_rgba(3,35,48,0.36)] transition-transform hover:-translate-y-0.5 hover:bg-[#b25f37] whitespace-nowrap"
+          >
+            <Heart className="h-3.5 w-3.5 text-[#ffe19c]" />
+            <span className="hidden sm:inline">APOYAR</span>
+          </button>
+
           {canEditActiveMuseum ? (
             <button
               type="button"
-              onClick={openEditorForCurrentMuseum}
+              onClick={() => openEditorForCurrentMuseum()}
               className="font-pixel inline-flex items-center gap-1.5 border-2 border-[#f2d17b] bg-[#724527]/95 px-3 py-2.5 text-[9px] text-[#fff9e6] shadow-[0_4px_0_rgba(3,35,48,0.36)] transition-transform hover:-translate-y-0.5 hover:bg-[#8d5531] whitespace-nowrap"
             >
               <Pencil className="h-3.5 w-3.5 text-[#f4d47d]" />
@@ -709,6 +829,14 @@ export default function App() {
           controlsPaused={anyOverlayOpen}
           onSelectIsland={handleSelectIsland}
           onOpenPiece={handleOpenPiece}
+          onOpenGuestbook={() =>
+            setGuestbookContext({
+              islandId: 'patio',
+              roomId: 'reception',
+              scopeLabel: 'Recepción · Patio 404',
+            })
+          }
+          onOpenSupport={() => setSupportModalOpen(true)}
           onEnter2DMode={(islandId) => {
             const islandRooms = getActiveRoomsForIsland(islandId);
             if (islandRooms.length > 0) {
@@ -742,6 +870,13 @@ export default function App() {
           theme={activeTheme}
           onSelectRoom={setSelectedRoomId}
           onOpenPiece={handleOpenPiece}
+          onOpenGuestbook={(isl, room) =>
+            setGuestbookContext({
+              islandId: isl.id,
+              roomId: room ? room.id : 'reception',
+              scopeLabel: room ? `${isl.title} · ${room.name}` : isl.title,
+            })
+          }
           onEnter2DMode={(islandId, roomId) => {
             setSelectedIslandId(null);
             setMode2D({ islandId, roomId });
@@ -769,11 +904,23 @@ export default function App() {
           }
           totalMuseumPieces={totalMuseumPieces}
           isModalOpen={Boolean(
-            modalPayload || editorSource || shareTargetPiece || characterModalOpen
+            modalPayload ||
+              editorSource ||
+              shareTargetPiece ||
+              characterModalOpen ||
+              guestbookContext ||
+              supportModalOpen
           )}
           onOpenPiece={handleOpenPiece}
           onOpenSign={(title, content) =>
             setModalPayload({ kind: 'dialogue', title, lines: [content] })
+          }
+          onOpenGuestbook={(isl, room) =>
+            setGuestbookContext({
+              islandId: isl.id,
+              roomId: room.id,
+              scopeLabel: `${isl.title} · ${room.name}`,
+            })
           }
           onExitToArchipelago={() => setMode2D(null)}
         />
@@ -795,11 +942,13 @@ export default function App() {
           try {
             const pieces = await fetchMuseumPieces(museum.id, museum.ownerId);
             setDirectoryOpen(false);
+            setEditorInitialViewMode(undefined);
             setActiveMuseum({ kind: 'cloud', museum, pieces });
             setEditorSource({
               kind: 'cloud',
               museum,
               pieces,
+              authUser,
               onSyncMuseum: (nextMuseum, nextPieces) => {
                 setActiveMuseum({ kind: 'cloud', museum: nextMuseum, pieces: nextPieces });
                 setEditorSource((prev) =>
@@ -891,16 +1040,62 @@ export default function App() {
         onClose={() => setShareTargetPiece(null)}
       />
 
+      {/* Libro de Visitas */}
+      <GuestbookModal
+        isOpen={Boolean(guestbookContext)}
+        museumId={activeMuseumId}
+        museumTitle={activeMuseumTitle}
+        museumIsPublic={activeMuseumIsPublic}
+        islandId={guestbookContext?.islandId || 'patio'}
+        roomId={guestbookContext?.roomId || 'reception'}
+        scopeLabel={guestbookContext?.scopeLabel || 'Recepción'}
+        authUser={authUser}
+        canModerate={canModerateActiveGuestbook}
+        onToast={showToast}
+        onClose={() => setGuestbookContext(null)}
+      />
+
+      {/* Donaciones y Aportar al Proyecto */}
+      <SupportProjectModal
+        isOpen={supportModalOpen}
+        activeMuseumId={activeMuseumId}
+        activeMuseumTitle={activeMuseumTitle}
+        activeMuseumAuthor={activeMuseumAuthor}
+        activeDonation={
+          activeMuseum.kind === 'cloud'
+            ? activeMuseum.museum.donationConfig
+            : flagshipConfig.donationConfig
+        }
+        flagshipDonation={flagshipConfig.donationConfig}
+        canEditActiveMuseum={
+          activeMuseum.kind === 'flagship' ? isFlagshipAdmin : isOwnerOfActiveCloud
+        }
+        onOpenEditorAppearance={() => openEditorForCurrentMuseum('appearance')}
+        onClose={() => setSupportModalOpen(false)}
+      />
+
       {/* Editor del Museo (Local o en la Nube) */}
       {editorSource && (
-        <MuseumEditor source={editorSource} onClose={() => setEditorSource(null)} />
+        <MuseumEditor
+          source={editorSource}
+          initialViewMode={editorInitialViewMode}
+          onClose={() => {
+            setEditorSource(null);
+            setEditorInitialViewMode(undefined);
+          }}
+        />
       )}
 
       {/* Visor unificado de diálogos, pinturas, multimedia y mini-apps */}
       <ContentModal
         payload={modalPayload}
+        frameStyle={activeTheme.frameStyle || 'archival'}
+        museumId={activeMuseumId}
+        museumOwnerId={activeMuseumOwnerId}
+        museumIsPublic={activeMuseumIsPublic}
         onSharePiece={(piece) => setShareTargetPiece(piece)}
         onVisitSourceMuseum={(sourceId) => openMuseumById(sourceId)}
+        onToast={showToast}
         onClose={() => setModalPayload(null)}
       />
 

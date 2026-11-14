@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { User } from 'firebase/auth';
 import { LogIn, Plus, Share2, X } from 'lucide-react';
 import { curatePieceIntoMuseum } from '../firebase/museumNetwork';
-import { blobToDataURL, compactImageToDataUrl, getMedia } from '../storage/mediaDb';
+import { compactImageToDataUrl, getMedia } from '../storage/mediaDb';
 import { CloudMuseum, MuseumPiece } from '../types/museum';
 
 interface SharePieceModalProps {
@@ -89,17 +89,13 @@ export const SharePieceModal: React.FC<SharePieceModalProps> = ({
     setSubmitting(true);
     setError(null);
     try {
-      let resolvedMediaDataUrl = piece.mediaDataUrl || '';
+      let resolvedMediaDataUrl =
+        piece.mediaDataUrl && /^data:image\//i.test(piece.mediaDataUrl) ? piece.mediaDataUrl : '';
       if (!resolvedMediaDataUrl && piece.mediaKey) {
         const blob = await getMedia(piece.mediaKey);
         if (blob && blob.type.startsWith('image/')) {
           const file = new File([blob], 'pieza.jpg', { type: blob.type });
           resolvedMediaDataUrl = await compactImageToDataUrl(file, 155000);
-        } else if (blob) {
-          const raw = await blobToDataURL(blob);
-          if (raw.length <= 165000) {
-            resolvedMediaDataUrl = raw;
-          }
         }
       }
 

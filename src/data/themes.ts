@@ -14,6 +14,8 @@ export const DEFAULT_MUSEUM_THEME: MuseumThemeConfig = {
   accentColor: '#f4d47d',
   surfaceColor: '#072634',
   roomThemeId: 'classic',
+  islandStyle: 'cliffs',
+  frameStyle: 'archival',
 };
 
 export const MUSEUM_THEME_PRESETS: ThemePreset[] = [

@@ -28,6 +28,8 @@ interface ArchipelagoPerspectiveCanvasProps {
   onSelectIsland: (islandId: string) => void;
   onOpenPiece: (piece: MuseumPiece) => void;
   onEnter2DMode: (islandId: string) => void;
+  onOpenGuestbook?: () => void;
+  onOpenSupport?: () => void;
 }
 
 const DECK_Y = 1.6;
@@ -58,7 +60,7 @@ interface BridgeData {
 
 interface TriggerData {
   id: string;
-  kind: 'island' | 'piece';
+  kind: 'island' | 'piece' | 'guestbook' | 'support';
   islandId: string;
   label: string;
   sublabel: string;
@@ -109,6 +111,8 @@ export const ArchipelagoPerspectiveCanvas: React.FC<ArchipelagoPerspectiveCanvas
   onSelectIsland,
   onOpenPiece,
   onEnter2DMode,
+  onOpenGuestbook,
+  onOpenSupport,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const radarRef = useRef<MiniCompassHandle | null>(null);
@@ -118,6 +122,10 @@ export const ArchipelagoPerspectiveCanvas: React.FC<ArchipelagoPerspectiveCanvas
   onSelectIslandRef.current = onSelectIsland;
   const onOpenPieceRef = useRef(onOpenPiece);
   onOpenPieceRef.current = onOpenPiece;
+  const onOpenGuestbookRef = useRef(onOpenGuestbook);
+  onOpenGuestbookRef.current = onOpenGuestbook;
+  const onOpenSupportRef = useRef(onOpenSupport);
+  onOpenSupportRef.current = onOpenSupport;
   const characterIdRef = useRef<CharacterId>(characterId);
   characterIdRef.current = characterId;
   const themeRef = useRef<MuseumThemeConfig | undefined>(theme);
@@ -288,6 +296,52 @@ export const ArchipelagoPerspectiveCanvas: React.FC<ArchipelagoPerspectiveCanvas
         radius: 3.2,
       });
 
+      if (node === hubNode) {
+        const gbX = node.cx - 4.2;
+        const gbZ = node.cz + 6.4;
+        props.push({
+          kind: 'pedestal',
+          x: gbX,
+          y: DECK_Y,
+          z: gbZ,
+          isIslandPortal: true,
+          label: 'Visitas',
+        });
+        colliders.push({ x: gbX, z: gbZ, radius: 0.62 });
+        triggers.push({
+          id: `guestbook-${node.island.id}`,
+          kind: 'guestbook',
+          islandId: node.island.id,
+          label: 'Libro de visitas · Recepción',
+          sublabel: 'Deja una nota o firma para el museo',
+          x: gbX,
+          z: gbZ,
+          radius: 2.65,
+        });
+
+        const spX = node.cx + 4.2;
+        const spZ = node.cz + 6.4;
+        props.push({
+          kind: 'pedestal',
+          x: spX,
+          y: DECK_Y,
+          z: spZ,
+          isIslandPortal: false,
+          label: 'Apoyar',
+        });
+        colliders.push({ x: spX, z: spZ, radius: 0.62 });
+        triggers.push({
+          id: `support-${node.island.id}`,
+          kind: 'support',
+          islandId: node.island.id,
+          label: 'Apoyar al proyecto',
+          sublabel: 'Donaciones y aporte comunitario',
+          x: spX,
+          z: spZ,
+          radius: 2.65,
+        });
+      }
+
       // Up to 3 featured piece pedestals per island
       const featured = (piecesByIsland[node.island.id] || []).slice(0, 3);
       featured.forEach((piece, idx) => {
@@ -427,7 +481,7 @@ export const ArchipelagoPerspectiveCanvas: React.FC<ArchipelagoPerspectiveCanvas
   const [hudCollapsed, setHudCollapsed] = useState(false);
   const [nearbyTrigger, setNearbyTrigger] = useState<{
     id: string;
-    kind: 'island' | 'piece';
+    kind: 'island' | 'piece' | 'guestbook' | 'support';
     islandId: string;
     label: string;
     sublabel: string;
@@ -450,7 +504,11 @@ export const ArchipelagoPerspectiveCanvas: React.FC<ArchipelagoPerspectiveCanvas
   const triggerInteract = useCallback(() => {
     const trig = activeTriggerRef.current;
     if (trig) {
-      if (trig.kind === 'piece' && trig.piece) {
+      if (trig.kind === 'guestbook') {
+        onOpenGuestbookRef.current?.();
+      } else if (trig.kind === 'support') {
+        onOpenSupportRef.current?.();
+      } else if (trig.kind === 'piece' && trig.piece) {
         onOpenPieceRef.current(trig.piece);
       } else {
         onSelectIslandRef.current(trig.islandId);
@@ -1449,7 +1507,13 @@ export const ArchipelagoPerspectiveCanvas: React.FC<ArchipelagoPerspectiveCanvas
           >
             <div className="min-w-0">
               <p className="font-pixel truncate text-[9px] text-[#f4d47d]">
-                {nearbyTrigger.kind === 'piece' ? 'PIEZA CERCANA' : 'ENTRADA DE ISLA'}
+                {nearbyTrigger.kind === 'piece'
+                  ? 'PIEZA CERCANA'
+                  : nearbyTrigger.kind === 'guestbook'
+                    ? 'LIBRO DE VISITAS'
+                    : nearbyTrigger.kind === 'support'
+                      ? 'APOYO AL PROYECTO'
+                      : 'ENTRADA DE ISLA'}
               </p>
               <p className="mt-1 truncate text-base font-bold text-[#fff9e6]">
                 {nearbyTrigger.label}

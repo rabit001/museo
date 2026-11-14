@@ -344,6 +344,7 @@ export function getBasePiecesForIsland(islandId: string): MuseumPiece[] {
       subtitle: 'Pieza visual',
       body: painting.desc,
       kind: 'painting',
+      mediumOrSize: 'Pintura digital de archivo · Serie 404',
       painting,
     }));
   }

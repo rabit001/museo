@@ -1,11 +1,12 @@
 import React from 'react';
-import { Island, IslandBiome } from '../types/museum';
+import { Island, IslandBiome, IslandShapeStyle } from '../types/museum';
 
 interface IslandArtworkSvgProps {
   biome: IslandBiome;
   cx: number;
   cy: number;
   scale?: number;
+  islandStyle?: IslandShapeStyle;
 }
 
 /**
@@ -17,6 +18,7 @@ export const IslandArtworkSvg: React.FC<IslandArtworkSvgProps> = ({
   cx,
   cy,
   scale = 1,
+  islandStyle = 'cliffs',
 }) => {
   // Cada grupo original tiene su centro visual aproximado en (205, 110)
   const tx = cx - 205 * scale;
@@ -24,6 +26,35 @@ export const IslandArtworkSvg: React.FC<IslandArtworkSvgProps> = ({
 
   return (
     <g transform={`translate(${tx} ${ty}) scale(${scale})`}>
+      {islandStyle === 'floating' && (
+        <>
+          <ellipse
+            cx="205"
+            cy="242"
+            rx="172"
+            ry="32"
+            fill="none"
+            stroke="#8ef5ff"
+            strokeWidth="5"
+            opacity="0.72"
+            filter="url(#softGlow)"
+          />
+          <path
+            d="M45 142 L205 272 L365 142 L205 210Z"
+            fill="#2d4c5c"
+            stroke="#1d3544"
+            strokeWidth="4"
+          />
+        </>
+      )}
+      {islandStyle === 'terraced' && (
+        <path
+          d="M2 132 L205 244 L408 132 L408 158 L205 270 L2 158Z"
+          fill="#cbb994"
+          stroke="#5f513d"
+          strokeWidth="4"
+        />
+      )}
       {biome === 'forest' && (
         <>
           <ellipse cx="205" cy="192" rx="205" ry="42" fill="#001c2a" opacity=".35" filter="url(#islandShadow)" />

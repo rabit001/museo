@@ -1,5 +1,36 @@
 {
   "entities": {
+    "DonationConfig": {
+      "title": "DonationConfig",
+      "description": "Configuración de enlace directo de donación para apoyar al proyecto o a un museo creador.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Indica si el botón de apoyo está habilitado."
+        },
+        "url": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000,
+          "pattern": "^(|https?://.*)$",
+          "description": "Enlace directo propio (PayPal, Ko-fi, Mercado Pago, etc.)."
+        },
+        "platformLabel": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 40,
+          "description": "Etiqueta visible de la plataforma."
+        },
+        "note": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 200,
+          "description": "Nota breve de agradecimiento o destino del apoyo."
+        }
+      },
+      "required": ["enabled", "url", "platformLabel", "note"]
+    },
     "Museum": {
       "title": "Museum",
       "description": "Un museo-archipiélago publicado o privado de un creador en la red de Museo 404.",
@@ -44,7 +75,7 @@
         },
         "theme": {
           "type": "object",
-          "description": "Paleta visual personalizada del museo (cielo, océano, acento, superficie, tema 2D)."
+          "description": "Paleta visual y estilo expresivo personalizado del museo."
         },
         "defaultCharacterId": {
           "type": "string",
@@ -70,6 +101,10 @@
         "pieceCount": {
           "type": "integer",
           "description": "Conteo de piezas publicadas en el museo."
+        },
+        "donationConfig": {
+          "$ref": "#/entities/DonationConfig",
+          "description": "Configuración opcional de donación directa del museo."
         },
         "createdAt": {
           "type": "string",
@@ -165,13 +200,15 @@
           "type": "string",
           "minLength": 0,
           "maxLength": 1000,
-          "description": "Enlace externo opcional."
+          "pattern": "^(|https?://.*)$",
+          "description": "Enlace externo opcional (solo http/https)."
         },
         "mediaDataUrl": {
           "type": "string",
           "minLength": 0,
           "maxLength": 180000,
-          "description": "Miniatura o imagen compactada para visualización compartida."
+          "pattern": "^(|data:image/.*)$",
+          "description": "Miniatura o imagen compactada (data:image/) para visualización compartida."
         },
         "isPublic": {
           "type": "boolean",
@@ -180,6 +217,30 @@
         "curatedFrom": {
           "type": "object",
           "description": "Atribución opcional cuando la pieza fue compartida desde otro museo."
+        },
+        "saleStatus": {
+          "type": "string",
+          "enum": ["not_for_sale", "for_sale", "reserved", "sold"],
+          "description": "Estado comercial opcional de la pieza."
+        },
+        "priceLabel": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 40,
+          "description": "Precio legible opcional (ej. $3,200 MXN)."
+        },
+        "mediumOrSize": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 120,
+          "description": "Técnica o dimensiones de la obra."
+        },
+        "paymentUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000,
+          "pattern": "^(|https?://.*)$",
+          "description": "Enlace directo de pago opcional (PayPal, Mercado Pago, etc.)."
         },
         "createdAt": {
           "type": "string",
@@ -208,6 +269,191 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "GuestbookEntry": {
+      "title": "GuestbookEntry",
+      "description": "Firma del libro de visitas abierta en recepción o dentro de cualquier sala del museo.",
+      "type": "object",
+      "properties": {
+        "museumId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID del museo ('museo404' o id de CloudMuseum)."
+        },
+        "islandId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "ID de la isla o 'patio'."
+        },
+        "roomId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "ID de la sala o 'reception'."
+        },
+        "scopeLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Etiqueta legible del lugar donde se firmó."
+        },
+        "nickname": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "Apodo libre del visitante."
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400,
+          "description": "Comentario o dedicatoria."
+        },
+        "authorUid": {
+          "type": "string",
+          "description": "UID opcional del visitante autenticado o null si anónimo."
+        },
+        "isVisible": {
+          "type": "boolean",
+          "description": "Permite moderación no destructiva por el curador."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Marca temporal del servidor."
+        }
+      },
+      "required": [
+        "museumId",
+        "islandId",
+        "roomId",
+        "scopeLabel",
+        "nickname",
+        "message",
+        "authorUid",
+        "isVisible",
+        "createdAt"
+      ]
+    },
+    "PurchaseInquiry": {
+      "title": "PurchaseInquiry",
+      "description": "Solicitud de compra o reserva con PII aislada exclusivamente para el propietario del museo.",
+      "type": "object",
+      "properties": {
+        "museumId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID del museo dueño de la obra."
+        },
+        "museumOwnerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID del propietario del museo (o 'museo404')."
+        },
+        "pieceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "ID de la obra solicitada."
+        },
+        "pieceTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Snapshot del título de la obra."
+        },
+        "priceLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "Snapshot del precio mostrado."
+        },
+        "buyerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Nombre del comprador interesado."
+        },
+        "buyerContact": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 120,
+          "description": "Correo electrónico o WhatsApp de contacto."
+        },
+        "shippingLocation": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 120,
+          "description": "Ciudad o país de envío opcional."
+        },
+        "message": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 500,
+          "description": "Mensaje o consulta del comprador."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "contacted", "closed"],
+          "description": "Estado de seguimiento de la solicitud."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Marca temporal de creación."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Marca temporal de actualización."
+        }
+      },
+      "required": [
+        "museumId",
+        "museumOwnerId",
+        "pieceId",
+        "pieceTitle",
+        "priceLabel",
+        "buyerName",
+        "buyerContact",
+        "shippingLocation",
+        "message",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "FlagshipConfig": {
+      "title": "FlagshipConfig",
+      "description": "Configuración visual, donación y estado comercial del museo insignia Museo 404.",
+      "type": "object",
+      "properties": {
+        "theme": {
+          "type": "object",
+          "description": "Paleta y estilo expresivo del museo insignia."
+        },
+        "donationConfig": {
+          "$ref": "#/entities/DonationConfig",
+          "description": "Enlace de donación oficial del proyecto."
+        },
+        "pieceCommerce": {
+          "type": "object",
+          "description": "Mapa acotado de precios y estados comerciales por ID de pieza insignia."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Marca temporal de actualización."
+        }
+      },
+      "required": ["theme", "updatedAt"]
     },
     "UserPrivateProfile": {
       "title": "UserPrivateProfile",
@@ -254,7 +500,19 @@
     },
     "/museums/{museumId}/pieces/{pieceId}": {
       "schema": { "$ref": "#/entities/MuseumPiece" },
-      "description": "Piezas exhibidas dentro de cada museo, incluyendo piezas compartidas desde otros museos con atribución."
+      "description": "Piezas exhibidas dentro de cada museo, incluyendo obras en venta y piezas compartidas con atribución."
+    },
+    "/guestbook/{entryId}": {
+      "schema": { "$ref": "#/entities/GuestbookEntry" },
+      "description": "Firmas del libro de visitas. Create abierto (apodo libre). List solo entradas visibles. Moderación y borrado por dueño o autor."
+    },
+    "/purchaseInquiries/{inquiryId}": {
+      "schema": { "$ref": "#/entities/PurchaseInquiry" },
+      "description": "Solicitudes de compra con PII. Create público (status pending). Read/Update/Delete exclusivo del museumOwnerId o curador de museo404."
+    },
+    "/flagship/{docId}": {
+      "schema": { "$ref": "#/entities/FlagshipConfig" },
+      "description": "Configuración pública de tema, donaciones y precios del museo insignia administrada exclusivamente por el curador de Museo 404."
     },
     "/users/{userId}/private/profile": {
       "schema": { "$ref": "#/entities/UserPrivateProfile" },

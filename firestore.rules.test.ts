@@ -1,8 +1,33 @@
 /**
- * Security Rules Verification Suite (Phase 0 TDD)
- * Documents and verifies that all "Dirty Dozen" adversarial payloads and valid
- * creator-network operations match the hardened firestore.rules contract.
+ * Security Rules Verification Suite (Firestore Emulator + Phase 0 TDD Contract)
+ *
+ * Run against the Firebase Emulator Suite (requires Java):
+ *   npx firebase emulators:exec --only firestore "node --experimental-strip-types --test firestore.rules.test.ts"
  */
+
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import test from 'node:test';
+import {
+  assertFails,
+  assertSucceeds,
+  initializeTestEnvironment,
+} from '@firebase/rules-unit-testing';
+import type { RulesTestEnvironment } from '@firebase/rules-unit-testing';
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where,
+} from 'firebase/firestore';
 
 export interface DirtyDozenCase {
   id: number;
@@ -87,7 +112,7 @@ export const DIRTY_DOZEN_CASES: DirtyDozenCase[] = [
   },
   {
     id: 8,
-    name: 'Value Poisoning With Invalid Title Type / Length',
+    name: 'Value Poisoning / Mixed Disjoint Update Keys',
     collectionPath: '/museums/museum_alice_1',
     operation: 'update',
     authUid: 'alice',
@@ -107,12 +132,12 @@ export const DIRTY_DOZEN_CASES: DirtyDozenCase[] = [
   },
   {
     id: 10,
-    name: 'Document Bloat (> 180KB mediaDataUrl)',
-    collectionPath: '/museums/museum_alice_1/pieces/piece_big',
+    name: 'Invalid MIME mediaDataUrl or javascript: URL',
+    collectionPath: '/museums/museum_alice_1/pieces/piece_xss',
     operation: 'create',
     authUid: 'alice',
     emailVerified: true,
-    payload: { mediaDataUrl: 'data:image/jpeg;base64,' + 'A'.repeat(200000) },
+    payload: { mediaDataUrl: 'data:text/html,<script>alert(1)</script>', url: 'javascript:alert(1)' },
     expected: 'PERMISSION_DENIED',
   },
   {
@@ -134,4 +159,423 @@ export const DIRTY_DOZEN_CASES: DirtyDozenCase[] = [
     emailVerified: true,
     expected: 'PERMISSION_DENIED',
   },
+  {
+    id: 13,
+    name: 'CuratedFrom Source Attribution Spoofing',
+    collectionPath: '/museums/museum_bob_1/pieces/piece_spoof_curated',
+    operation: 'create',
+    authUid: 'bob',
+    emailVerified: true,
+    payload: {
+      curatedFrom: {
+        sourceMuseumId: 'museum_alice_pub',
+        sourceMuseumTitle: 'Falsified Title',
+        sourceAuthorName: 'Alice',
+        sourcePieceId: 'piece_1',
+        sourcePieceTitle: 'Original Work',
+      },
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 14,
+    name: 'PII Leak on Purchase Inquiries (Non-Owner List/Get)',
+    collectionPath: '/purchaseInquiries',
+    operation: 'list',
+    authUid: 'bob',
+    emailVerified: true,
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 15,
+    name: 'Purchase Inquiry Status Shortcutting or Owner Spoofing',
+    collectionPath: '/purchaseInquiries/inq_bad',
+    operation: 'create',
+    authUid: null,
+    emailVerified: false,
+    payload: {
+      museumId: 'museum_alice_pub',
+      museumOwnerId: 'bob',
+      status: 'contacted',
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 16,
+    name: 'Guestbook Hidden Create / Oversized Nickname / Foreign Delete',
+    collectionPath: '/guestbook/gb_bad',
+    operation: 'create',
+    authUid: null,
+    emailVerified: false,
+    payload: {
+      museumId: 'museum_alice_pub',
+      nickname: 'x'.repeat(60),
+      isVisible: false,
+    },
+    expected: 'PERMISSION_DENIED',
+  },
 ];
+
+function validMuseumDoc(ownerId: string, overrides: Record<string, unknown> = {}) {
+  return {
+    ownerId,
+    authorName: ownerId === 'alice' ? 'Alice Studio' : 'Bob Kitchen',
+    title: ownerId === 'alice' ? 'Galería Alice' : 'Bistró Bob',
+    subtitle: 'Colección de prueba',
+    category: 'arte',
+    templateId: 'arte',
+    theme: {
+      presetId: 'archipielago',
+      skyColor: '#6ec9da',
+      oceanColor: '#2caac0',
+      accentColor: '#f4d47d',
+      surfaceColor: '#072634',
+      roomThemeId: 'classic',
+    },
+    defaultCharacterId: 'explorador',
+    isPublic: true,
+    islands: [{ id: 'patio', title: 'Patio' }],
+    rooms: [{ id: 'sala1', islandId: 'patio', name: 'Sala 1' }],
+    islandCount: 1,
+    pieceCount: 0,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    ...overrides,
+  };
+}
+
+function validPieceDoc(museumId: string, ownerId: string, overrides: Record<string, unknown> = {}) {
+  return {
+    museumId,
+    ownerId,
+    islandId: 'patio',
+    roomId: 'sala1',
+    title: 'Obra válida',
+    subtitle: 'Nota',
+    body: 'Contenido expositivo.',
+    kind: 'text',
+    type: 'text',
+    url: '',
+    mediaDataUrl: '',
+    isPublic: true,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    ...overrides,
+  };
+}
+
+const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST;
+
+if (emulatorHost) {
+  let testEnv: RulesTestEnvironment;
+
+  test.before(async () => {
+    const rules = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf8');
+    testEnv = await initializeTestEnvironment({
+      projectId: 'museo-404-rules-test',
+      firestore: { rules },
+    });
+  });
+
+  test.after(async () => {
+    await testEnv.cleanup();
+  });
+
+  test.beforeEach(async () => {
+    await testEnv.clearFirestore();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const adminDb = ctx.firestore();
+      await setDoc(doc(adminDb, 'museums', 'museum_alice_pub'), {
+        ...validMuseumDoc('alice', { isPublic: true }),
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        updatedAt: new Date('2026-01-01T00:00:00Z'),
+      });
+      await setDoc(doc(adminDb, 'museums', 'museum_alice_priv'), {
+        ...validMuseumDoc('alice', { title: 'Privado Alice', isPublic: false }),
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        updatedAt: new Date('2026-01-01T00:00:00Z'),
+      });
+      await setDoc(doc(adminDb, 'museums', 'museum_bob_1'), {
+        ...validMuseumDoc('bob', { isPublic: true }),
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        updatedAt: new Date('2026-01-01T00:00:00Z'),
+      });
+      await setDoc(doc(adminDb, 'museums', 'museum_alice_pub', 'pieces', 'p_pub'), {
+        ...validPieceDoc('museum_alice_pub', 'alice', { isPublic: true }),
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        updatedAt: new Date('2026-01-01T00:00:00Z'),
+      });
+      await setDoc(doc(adminDb, 'museums', 'museum_alice_priv', 'pieces', 'p_priv'), {
+        ...validPieceDoc('museum_alice_priv', 'alice', { isPublic: false }),
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        updatedAt: new Date('2026-01-01T00:00:00Z'),
+      });
+    });
+  });
+
+  test('Frontend list queries match security rules (public directory, my museums, pieces)', async () => {
+    const anonDb = testEnv.unauthenticatedContext().firestore();
+    const aliceDb = testEnv.authenticatedContext('alice', { email_verified: true }).firestore();
+    const bobDb = testEnv.authenticatedContext('bob', { email_verified: true }).firestore();
+
+    // 1. Directorio público: where('isPublic', '==', true)
+    const pubSnap = await assertSucceeds(
+      getDocs(query(collection(anonDb, 'museums'), where('isPublic', '==', true), limit(60)))
+    );
+    assert.equal(pubSnap.size, 2);
+
+    // 2. Mis museos: where('ownerId', '==', uid)
+    const mySnap = await assertSucceeds(
+      getDocs(query(collection(aliceDb, 'museums'), where('ownerId', '==', 'alice'), limit(30)))
+    );
+    assert.equal(mySnap.size, 2);
+
+    // Bob querying Alice's museums (including private) must fail
+    await assertFails(
+      getDocs(query(collection(bobDb, 'museums'), where('ownerId', '==', 'alice'), limit(30)))
+    );
+
+    // Unfiltered list on /museums must fail
+    await assertFails(getDocs(query(collection(bobDb, 'museums'), limit(60))));
+
+    // 3. Listado de piezas públicas de un museo: where('isPublic', '==', true)
+    const pubPiecesSnap = await assertSucceeds(
+      getDocs(
+        query(
+          collection(anonDb, 'museums', 'museum_alice_pub', 'pieces'),
+          where('isPublic', '==', true),
+          limit(250)
+        )
+      )
+    );
+    assert.equal(pubPiecesSnap.size, 1);
+
+    // Owner querying own private museum pieces: where('ownerId', '==', uid)
+    const ownerPiecesSnap = await assertSucceeds(
+      getDocs(
+        query(
+          collection(aliceDb, 'museums', 'museum_alice_priv', 'pieces'),
+          where('ownerId', '==', 'alice'),
+          limit(250)
+        )
+      )
+    );
+    assert.equal(ownerPiecesSnap.size, 1);
+
+    // Unfiltered list on pieces must fail
+    await assertFails(
+      getDocs(query(collection(bobDb, 'museums', 'museum_alice_priv', 'pieces'), limit(250)))
+    );
+  });
+
+  test('CuratedFrom attribution verification, URL/image regexes, and disjoint updates', async () => {
+    const bobDb = testEnv.authenticatedContext('bob', { email_verified: true }).firestore();
+    const aliceDb = testEnv.authenticatedContext('alice', { email_verified: true }).firestore();
+
+    // Valid curation matching Alice's real museum title and authorName
+    await assertSucceeds(
+      setDoc(
+        doc(bobDb, 'museums', 'museum_bob_1', 'pieces', 'p_curated_ok'),
+        validPieceDoc('museum_bob_1', 'bob', {
+          curatedFrom: {
+            sourceMuseumId: 'museum_alice_pub',
+            sourceMuseumTitle: 'Galería Alice',
+            sourceAuthorName: 'Alice Studio',
+            sourcePieceId: 'p_pub',
+            sourcePieceTitle: 'Obra válida',
+          },
+        })
+      )
+    );
+
+    // Valid curation from canonical flagship museo404
+    await assertSucceeds(
+      setDoc(
+        doc(bobDb, 'museums', 'museum_bob_1', 'pieces', 'p_curated_flagship'),
+        validPieceDoc('museum_bob_1', 'bob', {
+          curatedFrom: {
+            sourceMuseumId: 'museo404',
+            sourceMuseumTitle: 'MUSEO 404 · siNOMBRE',
+            sourceAuthorName: 'Colección Original',
+            sourcePieceId: 'base-1',
+            sourcePieceTitle: 'Obra base',
+          },
+        })
+      )
+    );
+
+    // Spoofed curatedFrom title must fail
+    await assertFails(
+      setDoc(
+        doc(bobDb, 'museums', 'museum_bob_1', 'pieces', 'p_curated_spoof'),
+        validPieceDoc('museum_bob_1', 'bob', {
+          curatedFrom: {
+            sourceMuseumId: 'museum_alice_pub',
+            sourceMuseumTitle: 'Falso Museo',
+            sourceAuthorName: 'Alice Studio',
+            sourcePieceId: 'p_pub',
+            sourcePieceTitle: 'Obra válida',
+          },
+        })
+      )
+    );
+
+    // Spoofed url & mediaDataUrl must fail
+    await assertFails(
+      setDoc(
+        doc(bobDb, 'museums', 'museum_bob_1', 'pieces', 'p_bad_url'),
+        validPieceDoc('museum_bob_1', 'bob', { url: 'javascript:alert(1)' })
+      )
+    );
+    await assertFails(
+      setDoc(
+        doc(bobDb, 'museums', 'museum_bob_1', 'pieces', 'p_bad_img'),
+        validPieceDoc('museum_bob_1', 'bob', { mediaDataUrl: 'data:text/html,<script></script>' })
+      )
+    );
+
+    // Valid https url & data:image/ must succeed
+    await assertSucceeds(
+      setDoc(
+        doc(bobDb, 'museums', 'museum_bob_1', 'pieces', 'p_good_media'),
+        validPieceDoc('museum_bob_1', 'bob', {
+          type: 'image',
+          kind: 'image',
+          url: 'https://example.com/obra',
+          mediaDataUrl: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
+        })
+      )
+    );
+
+    // Disjoint museum updates succeed separately, fail if mixed
+    await assertSucceeds(
+      updateDoc(doc(aliceDb, 'museums', 'museum_alice_pub'), {
+        title: 'Galería Renovada',
+        donationConfig: {
+          enabled: true,
+          url: 'https://ko-fi.com/alice',
+          platformLabel: 'Ko-fi',
+          note: 'Apoya la galería',
+        },
+        updatedAt: serverTimestamp(),
+      })
+    );
+    await assertFails(
+      updateDoc(doc(aliceDb, 'museums', 'museum_alice_pub'), {
+        donationConfig: {
+          enabled: true,
+          url: 'javascript:alert(1)',
+          platformLabel: 'Ko-fi',
+          note: 'Malicioso',
+        },
+        updatedAt: serverTimestamp(),
+      })
+    );
+    await assertSucceeds(
+      updateDoc(doc(aliceDb, 'museums', 'museum_alice_pub'), {
+        islands: [{ id: 'patio', title: 'Patio' }],
+        rooms: [{ id: 'sala1', islandId: 'patio', name: 'Sala 1' }],
+        islandCount: 1,
+        pieceCount: 1,
+        updatedAt: serverTimestamp(),
+      })
+    );
+    await assertFails(
+      updateDoc(doc(aliceDb, 'museums', 'museum_alice_pub'), {
+        title: 'Mezcla Inválida',
+        islandCount: 1,
+        updatedAt: serverTimestamp(),
+      })
+    );
+
+    // Valid delete on own piece
+    await assertSucceeds(deleteDoc(doc(aliceDb, 'museums', 'museum_alice_pub', 'pieces', 'p_pub')));
+    // Foreign get on private museum fails
+    await assertFails(getDoc(doc(bobDb, 'museums', 'museum_alice_priv')));
+  });
+
+  test('Guestbook open nickname writes, moderation, and PurchaseInquiries PII isolation', async () => {
+    const anonDb = testEnv.unauthenticatedContext().firestore();
+    const aliceDb = testEnv.authenticatedContext('alice', { email_verified: true }).firestore();
+    const bobDb = testEnv.authenticatedContext('bob', { email_verified: true }).firestore();
+
+    // Open visitor can sign guestbook on flagship museo404 and public museum
+    await assertSucceeds(
+      setDoc(doc(anonDb, 'guestbook', 'gb_anon_1'), {
+        museumId: 'museo404',
+        islandId: 'patio',
+        roomId: 'reception',
+        scopeLabel: 'Recepción · Patio 404',
+        nickname: 'Viajero Nocturno',
+        message: 'Qué bonito lugar para perderse.',
+        authorUid: null,
+        isVisible: true,
+        createdAt: serverTimestamp(),
+      })
+    );
+
+    await assertSucceeds(
+      getDocs(
+        query(
+          collection(anonDb, 'guestbook'),
+          where('isVisible', '==', true),
+          where('museumId', '==', 'museo404'),
+          limit(50)
+        )
+      )
+    );
+
+    // Non-owner Bob cannot delete anon entry; author or owner cannot be spoofed
+    await assertFails(deleteDoc(doc(bobDb, 'guestbook', 'gb_anon_1')));
+
+    // Anonymous visitor can create purchase inquiry for Alice's public museum
+    await assertSucceeds(
+      setDoc(doc(anonDb, 'purchaseInquiries', 'inq_1'), {
+        museumId: 'museum_alice_pub',
+        museumOwnerId: 'alice',
+        pieceId: 'p_pub',
+        pieceTitle: 'Obra válida',
+        priceLabel: '$2,500 MXN',
+        buyerName: 'María',
+        buyerContact: 'maria@example.com',
+        shippingLocation: 'CDMX',
+        message: '¿Sigue disponible?',
+        status: 'pending',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+
+    // PII Isolation: Neither anon nor Bob can read or list Alice's inquiries
+    await assertFails(getDoc(doc(anonDb, 'purchaseInquiries', 'inq_1')));
+    await assertFails(getDoc(doc(bobDb, 'purchaseInquiries', 'inq_1')));
+    await assertFails(
+      getDocs(
+        query(collection(bobDb, 'purchaseInquiries'), where('museumOwnerId', '==', 'alice'), limit(50))
+      )
+    );
+
+    // Alice can list and update status of her own inquiries
+    const aliceInq = await assertSucceeds(
+      getDocs(
+        query(
+          collection(aliceDb, 'purchaseInquiries'),
+          where('museumOwnerId', '==', 'alice'),
+          limit(50)
+        )
+      )
+    );
+    assert.equal(aliceInq.size, 1);
+
+    await assertSucceeds(
+      updateDoc(doc(aliceDb, 'purchaseInquiries', 'inq_1'), {
+        status: 'contacted',
+        updatedAt: serverTimestamp(),
+      })
+    );
+  });
+} else {
+  test('Dirty Dozen & query contract registry present (set FIRESTORE_EMULATOR_HOST to execute live)', () => {
+    assert.equal(DIRTY_DOZEN_CASES.length, 16);
+  });
+}

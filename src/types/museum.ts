@@ -29,6 +29,58 @@ export type CharacterId =
 export type ThemeId = 'classic' | 'night' | 'twilight' | 'gameboy';
 export type LightMode = 'auto' | 'on' | 'off';
 
+/** Estilo expresivo opcional de siluetas de isla y marcos */
+export type IslandShapeStyle = 'cliffs' | 'terraced' | 'floating';
+export type FrameStyle = 'archival' | 'ornate' | 'minimal';
+
+/** Estado comercial de una pieza */
+export type SaleStatus = 'not_for_sale' | 'for_sale' | 'reserved' | 'sold';
+
+/** Estado de seguimiento de una solicitud de compra */
+export type InquiryStatus = 'pending' | 'contacted' | 'closed';
+
+/** Configuración de donación de un museo */
+export interface DonationConfig {
+  enabled: boolean;
+  /** Debe comenzar con http:// o https:// */
+  url: string;
+  /** Etiqueta visible: "PayPal" | "Ko-fi" | "Mercado Pago" | "Otro" */
+  platformLabel: string;
+  /** Texto corto de agradecimiento / invitación */
+  note: string;
+}
+
+/** Entrada del Libro de Visitas */
+export interface GuestbookEntry {
+  id: string;
+  museumId: string;
+  islandId: string;
+  roomId: string;
+  scopeLabel: string;
+  nickname: string;
+  message: string;
+  authorUid: string | null;
+  isVisible: boolean;
+  createdAt: string;
+}
+
+/** Solicitud de compra / reserva (PII aislada) */
+export interface PurchaseInquiry {
+  id: string;
+  museumId: string;
+  museumOwnerId: string;
+  pieceId: string;
+  pieceTitle: string;
+  priceLabel: string;
+  buyerName: string;
+  buyerContact: string;
+  shippingLocation: string;
+  message: string;
+  status: InquiryStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface MuseumThemeConfig {
   presetId: string;
   skyColor: string;
@@ -36,6 +88,8 @@ export interface MuseumThemeConfig {
   accentColor: string;
   surfaceColor: string;
   roomThemeId: ThemeId;
+  islandStyle?: IslandShapeStyle;
+  frameStyle?: FrameStyle;
 }
 
 export interface CuratedFromMeta {
@@ -101,6 +155,12 @@ export interface MuseumPiece {
   painting?: PaintingData;
   app?: InteractiveAppData;
   curatedFrom?: CuratedFromMeta;
+
+  // Campos comerciales opcionales
+  saleStatus?: SaleStatus;
+  priceLabel?: string;
+  mediumOrSize?: string;
+  paymentUrl?: string;
 }
 
 export interface PieceOverride {
@@ -109,6 +169,10 @@ export interface PieceOverride {
   body?: string;
   type?: PieceType;
   mediaKey?: string | null;
+  saleStatus?: SaleStatus;
+  priceLabel?: string;
+  mediumOrSize?: string;
+  paymentUrl?: string;
 }
 
 export interface MuseumState {
@@ -146,4 +210,19 @@ export interface CloudMuseum {
   rooms: Room[];
   islandCount: number;
   pieceCount: number;
+  donationConfig?: DonationConfig;
+}
+
+export interface PieceCommerceOverride {
+  saleStatus: SaleStatus;
+  priceLabel: string;
+  mediumOrSize: string;
+  paymentUrl: string;
+}
+
+/** Configuración local/remota del museo insignia (flagship) */
+export interface FlagshipConfig {
+  theme: MuseumThemeConfig;
+  donationConfig?: DonationConfig;
+  pieceCommerce?: Record<string, PieceCommerceOverride>;
 }

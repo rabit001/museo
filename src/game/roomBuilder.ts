@@ -14,7 +14,7 @@ export interface RoomDoor {
 
 export interface RoomInteractive {
   id: string;
-  type: 'pedestal' | 'painting' | 'arcade' | 'sign' | 'fountain' | 'tree' | 'link_item';
+  type: 'pedestal' | 'painting' | 'arcade' | 'sign' | 'fountain' | 'tree' | 'link_item' | 'guestbook';
   x: number;
   y: number;
   title: string;
@@ -208,6 +208,16 @@ export function buildPlayableRoom(
     y: 9 * TILE_SIZE,
     title: activeRoom.name,
     signText: `${island.title} · ${activeRoom.name}\n\n${activeRoom.description || island.description}\n\nPiezas en esta sala: ${pieces.length}. Camina al portal turquesa del sur para volver al archipiélago.`,
+  });
+
+  // Atril del Libro de Visitas de la sala junto al acceso principal
+  interactives.push({
+    id: `guestbook_${activeRoom.id}`,
+    type: 'guestbook',
+    x: 6 * TILE_SIZE,
+    y: 8 * TILE_SIZE,
+    title: `Libro de visitas · ${activeRoom.name}`,
+    triggerRadius: 26,
   });
 
   // Caso especial icónico: Patio 404 sala principal
