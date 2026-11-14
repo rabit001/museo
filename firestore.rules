@@ -1,0 +1,247 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net (Default-Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // 3. Entity Validators
+    function isValidCategory(category) {
+      return category is string &&
+        category in ['arte', 'musica', 'gastronomia', 'literatura', 'experimentos', 'personal'];
+    }
+
+    function isValidCharacterId(characterId) {
+      return characterId is string &&
+        characterId in ['explorador', 'melomano', 'chef', 'astronomo', 'robot404'];
+    }
+
+    function isValidTheme(theme) {
+      return theme is map &&
+        theme.keys().hasAll(['presetId', 'skyColor', 'oceanColor', 'accentColor', 'surfaceColor', 'roomThemeId']) &&
+        theme.keys().hasOnly(['presetId', 'skyColor', 'oceanColor', 'accentColor', 'surfaceColor', 'roomThemeId']) &&
+        theme.presetId is string && theme.presetId.size() >= 1 && theme.presetId.size() <= 32 &&
+        theme.skyColor is string && theme.skyColor.size() >= 4 && theme.skyColor.size() <= 16 &&
+        theme.oceanColor is string && theme.oceanColor.size() >= 4 && theme.oceanColor.size() <= 16 &&
+        theme.accentColor is string && theme.accentColor.size() >= 4 && theme.accentColor.size() <= 16 &&
+        theme.surfaceColor is string && theme.surfaceColor.size() >= 4 && theme.surfaceColor.size() <= 16 &&
+        theme.roomThemeId is string && theme.roomThemeId in ['classic', 'night', 'twilight', 'gameboy'];
+    }
+
+    function isValidMuseum(data) {
+      return data.keys().hasAll([
+          'ownerId', 'authorName', 'title', 'subtitle', 'category', 'templateId',
+          'theme', 'defaultCharacterId', 'isPublic', 'islands', 'rooms',
+          'islandCount', 'pieceCount', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'ownerId', 'authorName', 'title', 'subtitle', 'category', 'templateId',
+          'theme', 'defaultCharacterId', 'isPublic', 'islands', 'rooms',
+          'islandCount', 'pieceCount', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.ownerId) &&
+        data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 80 &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 100 &&
+        data.subtitle is string && data.subtitle.size() <= 180 &&
+        isValidCategory(data.category) &&
+        data.templateId is string && data.templateId.size() >= 1 && data.templateId.size() <= 40 &&
+        isValidTheme(data.theme) &&
+        isValidCharacterId(data.defaultCharacterId) &&
+        data.isPublic is bool &&
+        data.islands is list && data.islands.size() >= 1 && data.islands.size() <= 20 && data.islands[0] is map &&
+        data.rooms is list && data.rooms.size() >= 1 && data.rooms.size() <= 60 && data.rooms[0] is map &&
+        data.islandCount is int && data.islandCount >= 1 && data.islandCount <= 20 &&
+        data.pieceCount is int && data.pieceCount >= 0 && data.pieceCount <= 500 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidCuratedFrom(c) {
+      return c is map &&
+        c.keys().hasAll(['sourceMuseumId', 'sourceMuseumTitle', 'sourceAuthorName', 'sourcePieceId', 'sourcePieceTitle']) &&
+        c.keys().hasOnly(['sourceMuseumId', 'sourceMuseumTitle', 'sourceAuthorName', 'sourcePieceId', 'sourcePieceTitle']) &&
+        c.sourceMuseumId is string && c.sourceMuseumId.size() >= 1 && c.sourceMuseumId.size() <= 128 &&
+        c.sourceMuseumTitle is string && c.sourceMuseumTitle.size() >= 1 && c.sourceMuseumTitle.size() <= 100 &&
+        c.sourceAuthorName is string && c.sourceAuthorName.size() >= 1 && c.sourceAuthorName.size() <= 80 &&
+        c.sourcePieceId is string && c.sourcePieceId.size() >= 1 && c.sourcePieceId.size() <= 128 &&
+        c.sourcePieceTitle is string && c.sourcePieceTitle.size() >= 1 && c.sourcePieceTitle.size() <= 120;
+    }
+
+    function isValidPiece(data) {
+      return data.keys().hasAll([
+          'museumId', 'ownerId', 'islandId', 'roomId', 'title', 'subtitle', 'body',
+          'kind', 'type', 'url', 'mediaDataUrl', 'isPublic', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'museumId', 'ownerId', 'islandId', 'roomId', 'title', 'subtitle', 'body',
+          'kind', 'type', 'url', 'mediaDataUrl', 'isPublic', 'curatedFrom', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.museumId) &&
+        isValidId(data.ownerId) &&
+        data.islandId is string && data.islandId.size() >= 1 && data.islandId.size() <= 80 &&
+        data.roomId is string && data.roomId.size() >= 1 && data.roomId.size() <= 80 &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 120 &&
+        data.subtitle is string && data.subtitle.size() <= 140 &&
+        data.body is string && data.body.size() <= 12000 &&
+        data.kind is string && data.kind in ['text', 'painting', 'app', 'link', 'image', 'audio', 'video'] &&
+        data.type is string && data.type in ['text', 'image', 'audio', 'video', 'link'] &&
+        data.url is string && data.url.size() <= 1000 &&
+        data.mediaDataUrl is string && data.mediaDataUrl.size() <= 180000 &&
+        data.isPublic is bool &&
+        (!('curatedFrom' in data) || isValidCuratedFrom(data.curatedFrom)) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidPrivateProfile(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'email', 'characterId', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'displayName', 'email', 'characterId', 'updatedAt']) &&
+        isValidId(data.uid) &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
+        data.email is string && data.email.size() <= 160 &&
+        isValidCharacterId(data.characterId) &&
+        data.updatedAt is timestamp;
+    }
+
+    // 4. Collections
+    match /museums/{museumId} {
+      allow get: if isValidId(museumId) && (
+        existing().isPublic == true || isOwner(existing().ownerId)
+      );
+
+      allow list: if existing().isPublic == true || (
+        isSignedIn() && existing().ownerId == request.auth.uid
+      );
+
+      allow create: if isVerifiedUser() &&
+        isValidId(museumId) &&
+        isValidMuseum(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isValidId(museumId) &&
+        isValidMuseum(incoming()) &&
+        isOwner(existing().ownerId) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().templateId == existing().templateId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'authorName', 'title', 'subtitle', 'category', 'theme', 'defaultCharacterId', 'isPublic', 'updatedAt'
+          ]) ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'islands', 'rooms', 'islandCount', 'pieceCount', 'updatedAt'
+          ]) ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'pieceCount', 'updatedAt'
+          ])
+        );
+
+      allow delete: if isVerifiedUser() &&
+        isValidId(museumId) &&
+        isOwner(existing().ownerId);
+
+      // Subcollection of museum pieces (Master Gate relational sync to parent museum)
+      match /pieces/{pieceId} {
+        allow get: if isValidId(museumId) && isValidId(pieceId) && (
+          existing().isPublic == true || isOwner(existing().ownerId)
+        );
+
+        allow list: if existing().isPublic == true || (
+          isSignedIn() && existing().ownerId == request.auth.uid
+        );
+
+        allow create: if isVerifiedUser() &&
+          isValidId(museumId) &&
+          isValidId(pieceId) &&
+          isValidPiece(incoming()) &&
+          incoming().museumId == museumId &&
+          incoming().ownerId == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          exists(/databases/$(database)/documents/museums/$(museumId)) &&
+          get(/databases/$(database)/documents/museums/$(museumId)).data.ownerId == request.auth.uid;
+
+        allow update: if isVerifiedUser() &&
+          isValidId(museumId) &&
+          isValidId(pieceId) &&
+          isValidPiece(incoming()) &&
+          isOwner(existing().ownerId) &&
+          incoming().museumId == existing().museumId &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          exists(/databases/$(database)/documents/museums/$(museumId)) &&
+          get(/databases/$(database)/documents/museums/$(museumId)).data.ownerId == request.auth.uid && (
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'islandId', 'roomId', 'title', 'subtitle', 'body', 'kind', 'type', 'url', 'mediaDataUrl', 'updatedAt'
+            ]) ||
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'isPublic', 'updatedAt'
+            ])
+          );
+
+        allow delete: if isVerifiedUser() &&
+          isValidId(museumId) &&
+          isValidId(pieceId) &&
+          isOwner(existing().ownerId) &&
+          exists(/databases/$(database)/documents/museums/$(museumId)) &&
+          get(/databases/$(database)/documents/museums/$(museumId)).data.ownerId == request.auth.uid;
+      }
+    }
+
+    // Strict PII & Personal Preferences Split Collection
+    match /users/{userId}/private/profile {
+      allow get: if isVerifiedUser() && isValidId(userId) && isOwner(userId);
+      allow list: if false;
+
+      allow create: if isVerifiedUser() &&
+        isValidId(userId) &&
+        isOwner(userId) &&
+        isValidPrivateProfile(incoming()) &&
+        incoming().uid == request.auth.uid &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isValidId(userId) &&
+        isOwner(userId) &&
+        isValidPrivateProfile(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'email', 'characterId', 'updatedAt'
+        ]);
+
+      allow delete: if isVerifiedUser() && isValidId(userId) && isOwner(userId);
+    }
+  }
+}

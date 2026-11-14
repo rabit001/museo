@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    font-family: 'Pixelify Sans', system-ui, -apple-system, sans-serif;
+  }
+}
+
+.font-pixel {
+  font-family: 'Press Start 2P', monospace;
+}
+
+.font-body {
+  font-family: 'Pixelify Sans', system-ui, sans-serif;
+}
+
+.pixelated {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* Scrollbar integrado con la estética del museo */
+.museum-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #4f8a88 #0d2b38;
+}
+
+.museum-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.museum-scroll::-webkit-scrollbar-track {
+  background: #0d2b38;
+}
+
+.museum-scroll::-webkit-scrollbar-thumb {
+  background: #4f8a88;
+  border: 1px solid #0d2b38;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

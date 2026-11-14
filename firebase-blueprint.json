@@ -1,0 +1,264 @@
+{
+  "entities": {
+    "Museum": {
+      "title": "Museum",
+      "description": "Un museo-archipiélago publicado o privado de un creador en la red de Museo 404.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID del creador propietario del museo."
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Nombre público del creador o proyecto."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Título del museo."
+        },
+        "subtitle": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 180,
+          "description": "Subtítulo o lema del museo."
+        },
+        "category": {
+          "type": "string",
+          "enum": ["arte", "musica", "gastronomia", "literatura", "experimentos", "personal"],
+          "description": "Categoría temática del museo."
+        },
+        "templateId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Plantilla base usada al crear el museo."
+        },
+        "theme": {
+          "type": "object",
+          "description": "Paleta visual personalizada del museo (cielo, océano, acento, superficie, tema 2D)."
+        },
+        "defaultCharacterId": {
+          "type": "string",
+          "enum": ["explorador", "melomano", "chef", "astronomo", "robot404"],
+          "description": "Personaje sugerido del museo."
+        },
+        "isPublic": {
+          "type": "boolean",
+          "description": "Si es visible en el directorio público de museos."
+        },
+        "islands": {
+          "type": "array",
+          "description": "Lista acotada de islas del archipiélago (máximo 20)."
+        },
+        "rooms": {
+          "type": "array",
+          "description": "Lista acotada de salas del museo (máximo 60)."
+        },
+        "islandCount": {
+          "type": "integer",
+          "description": "Conteo de islas visibles."
+        },
+        "pieceCount": {
+          "type": "integer",
+          "description": "Conteo de piezas publicadas en el museo."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Marca temporal de creación."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Marca temporal de última actualización."
+        }
+      },
+      "required": [
+        "ownerId",
+        "authorName",
+        "title",
+        "subtitle",
+        "category",
+        "templateId",
+        "theme",
+        "defaultCharacterId",
+        "isPublic",
+        "islands",
+        "rooms",
+        "islandCount",
+        "pieceCount",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MuseumPiece": {
+      "title": "MuseumPiece",
+      "description": "Obra, texto, enlace, recomendación o pieza curada dentro de una sala del museo.",
+      "type": "object",
+      "properties": {
+        "museumId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID del museo al que pertenece la pieza."
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID del propietario del museo."
+        },
+        "islandId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID de la isla dentro del museo."
+        },
+        "roomId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID de la sala dentro de la isla."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Título de la pieza."
+        },
+        "subtitle": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 140,
+          "description": "Subtítulo o categoría breve."
+        },
+        "body": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 12000,
+          "description": "Texto, poema, reseña o descripción del platillo."
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["text", "painting", "app", "link", "image", "audio", "video"],
+          "description": "Clase de pieza en el visor."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["text", "image", "audio", "video", "link"],
+          "description": "Tipo editorial de la pieza."
+        },
+        "url": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000,
+          "description": "Enlace externo opcional."
+        },
+        "mediaDataUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 180000,
+          "description": "Miniatura o imagen compactada para visualización compartida."
+        },
+        "isPublic": {
+          "type": "boolean",
+          "description": "Visibilidad sincronizada con el museo padre."
+        },
+        "curatedFrom": {
+          "type": "object",
+          "description": "Atribución opcional cuando la pieza fue compartida desde otro museo."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Marca temporal de creación."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Marca temporal de actualización."
+        }
+      },
+      "required": [
+        "museumId",
+        "ownerId",
+        "islandId",
+        "roomId",
+        "title",
+        "subtitle",
+        "body",
+        "kind",
+        "type",
+        "url",
+        "mediaDataUrl",
+        "isPublic",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserPrivateProfile": {
+      "title": "UserPrivateProfile",
+      "description": "Perfil privado del creador con correo aislado y personaje elegido.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID del usuario autenticado."
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Nombre del usuario."
+        },
+        "email": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 160,
+          "description": "Correo electrónico privado del usuario."
+        },
+        "characterId": {
+          "type": "string",
+          "enum": ["explorador", "melomano", "chef", "astronomo", "robot404"],
+          "description": "Avatar elegido por el usuario para explorar museos."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Última actualización del perfil."
+        }
+      },
+      "required": ["uid", "displayName", "email", "characterId", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/museums/{museumId}": {
+      "schema": { "$ref": "#/entities/Museum" },
+      "description": "Museos creados por usuarios, consultables en el directorio si isPublic == true o por su dueño."
+    },
+    "/museums/{museumId}/pieces/{pieceId}": {
+      "schema": { "$ref": "#/entities/MuseumPiece" },
+      "description": "Piezas exhibidas dentro de cada museo, incluyendo piezas compartidas desde otros museos con atribución."
+    },
+    "/users/{userId}/private/profile": {
+      "schema": { "$ref": "#/entities/UserPrivateProfile" },
+      "description": "Preferencias privadas e información PII del usuario estrictamente aislada al propietario."
+    }
+  }
+}

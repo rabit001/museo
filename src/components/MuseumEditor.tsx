@@ -1,0 +1,1755 @@
+import React, { useRef, useState } from 'react';
+import {
+  ArrowLeft,
+  Download,
+  Palette,
+  Plus,
+  RotateCcw,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react';
+import { CHARACTER_PROFILES } from '../data/characters';
+import { BIOME_LABELS, ORIGINAL_ISLANDS, getBasePiecesForIsland } from '../data/initialContent';
+import { CATEGORY_META, DEFAULT_MUSEUM_THEME, MUSEUM_THEME_PRESETS } from '../data/themes';
+import {
+  deleteCloudMuseum,
+  deleteCloudPiece,
+  deleteCloudPiecesInIds,
+  saveCloudPiece,
+  updateCloudMuseumMetadata,
+  updateCloudMuseumStructure,
+} from '../firebase/museumNetwork';
+import { compactImage, compactImageToDataUrl, deleteMedia, putMedia } from '../storage/mediaDb';
+import {
+  createNewIsland,
+  deleteCompleteIsland,
+  exportMuseumBackup,
+  getPiecesCountForIsland,
+  getPiecesForRoom,
+  getResolvedIslands,
+  getRoomsForIsland,
+  importMuseumBackup,
+  makeId,
+  suggestIslandPosition,
+} from '../storage/museumStore';
+import {
+  CharacterId,
+  CloudMuseum,
+  Island,
+  IslandBiome,
+  MuseumCategory,
+  MuseumPiece,
+  MuseumState,
+  MuseumThemeConfig,
+  PieceType,
+  Room,
+  ThemeId,
+} from '../types/museum';
+
+export type EditorSource =
+  | {
+      kind: 'local';
+      state: MuseumState;
+      onUpdateState: (next: MuseumState) => void;
+      theme?: MuseumThemeConfig;
+      onUpdateTheme?: (next: MuseumThemeConfig) => void;
+    }
+  | {
+      kind: 'cloud';
+      museum: CloudMuseum;
+      pieces: MuseumPiece[];
+      onSyncMuseum: (nextMuseum: CloudMuseum, nextPieces: MuseumPiece[]) => void;
+      onDeletedMuseum: (deletedMuseumId: string) => void;
+    };
+
+interface MuseumEditorProps {
+  source: EditorSource;
+  onClose: () => void;
+}
+
+type EditorView =
+  | { mode: 'appearance' }
+  | { mode: 'island'; islandId: string }
+  | { mode: 'new-island' }
+  | { mode: 'room'; islandId: string; roomId: string }
+  | { mode: 'piece'; islandId: string; roomId: string; pieceId: string | null };
+
+export const MuseumEditor: React.FC<MuseumEditorProps> = ({ source, onClose }) => {
+  const isCloud = source.kind === 'cloud';
+
+  const visibleIslands: Island[] = isCloud
+    ? source.museum.islands
+    : getResolvedIslands(source.state, false);
+
+  const hiddenOriginals = isCloud
+    ? []
+    : ORIGINAL_ISLANDS.filter((i) => source.state.hiddenIslands.includes(i.id));
+
+  const getRooms = (islandId: string): Room[] =>
+    isCloud
+      ? source.museum.rooms.filter((r) => r.islandId === islandId)
+      : getRoomsForIsland(source.state, islandId);
+
+  const getPieces = (islandId: string, roomId: string): MuseumPiece[] =>
+    isCloud
+      ? source.pieces.filter((p) => p.islandId === islandId && p.roomId === roomId)
+      : getPiecesForRoom(source.state, islandId, roomId);
+
+  const getIslandPiecesCount = (islandId: string): number =>
+    isCloud
+      ? source.pieces.filter((p) => p.islandId === islandId).length
+      : getPiecesCountForIsland(source.state, islandId);
+
+  const [view, setView] = useState<EditorView>(() => ({
+    mode: 'island',
+    islandId: visibleIslands[0]?.id || 'patio',
+  }));
+  const [notice, setNotice] = useState<string>(
+    isCloud
+      ? 'Este museo se guarda en la nube y puede visitarse desde el directorio.'
+      : 'Los cambios se guardan automáticamente en este navegador.'
+  );
+  const [confirmState, setConfirmState] = useState<{
+    message: string;
+    confirmLabel: string;
+    onConfirm: () => void | Promise<void>;
+  } | null>(null);
+
+  // Estado de Apariencia / Metadatos del museo
+  const [metaTitle, setMetaTitle] = useState(isCloud ? source.museum.title : 'MUSEO 404 · siNOMBRE');
+  const [metaSubtitle, setMetaSubtitle] = useState(
+    isCloud ? source.museum.subtitle : 'Un archipiélago de ideas'
+  );
+  const [metaAuthor, setMetaAuthor] = useState(isCloud ? source.museum.authorName : '');
+  const [metaCategory, setMetaCategory] = useState<MuseumCategory>(
+    isCloud ? source.museum.category : 'personal'
+  );
+  const [metaIsPublic, setMetaIsPublic] = useState<boolean>(isCloud ? source.museum.isPublic : false);
+  const [metaCharacter, setMetaCharacter] = useState<CharacterId>(
+    isCloud ? source.museum.defaultCharacterId : 'explorador'
+  );
+  const [metaTheme, setMetaTheme] = useState<MuseumThemeConfig>(
+    isCloud ? source.museum.theme : source.theme || DEFAULT_MUSEUM_THEME
+  );
+  const [savingMeta, setSavingMeta] = useState(false);
+
+  // Formulario inline para nueva sala
+  const [creatingRoomName, setCreatingRoomName] = useState('');
+  const [showNewRoomForm, setShowNewRoomForm] = useState(false);
+
+  // Formulario de nueva isla
+  const suggestedPos = suggestIslandPosition(visibleIslands);
+  const [newIslTitle, setNewIslTitle] = useState('');
+  const [newIslLabel, setNewIslLabel] = useState('');
+  const [newIslBiome, setNewIslBiome] = useState<IslandBiome>('forest');
+  const [newIslEyebrow, setNewIslEyebrow] = useState('NUEVA ISLA DEL ARCHIPIÉLAGO');
+  const [newIslDesc, setNewIslDesc] = useState('');
+  const [newIslFooter, setNewIslFooter] = useState('Colección insular');
+  const [newIslX, setNewIslX] = useState<number>(suggestedPos.x);
+  const [newIslY, setNewIslY] = useState<number>(suggestedPos.y);
+
+  const activeIsland =
+    view.mode !== 'new-island' && view.mode !== 'appearance'
+      ? visibleIslands.find((i) => i.id === view.islandId) || visibleIslands[0]
+      : null;
+
+  const [islTitle, setIslTitle] = useState(activeIsland?.title || '');
+  const [islLabel, setIslLabel] = useState(activeIsland?.mapLabel || '');
+  const [islEyebrow, setIslEyebrow] = useState(activeIsland?.eyebrow || '');
+  const [islDesc, setIslDesc] = useState(activeIsland?.description || '');
+  const [islFooter, setIslFooter] = useState(activeIsland?.footer || '');
+  const [islBiome, setIslBiome] = useState<IslandBiome>(activeIsland?.biome || 'forest');
+  const [islX, setIslX] = useState<number>(activeIsland?.x || 50);
+  const [islY, setIslY] = useState<number>(activeIsland?.y || 50);
+
+  const [roomName, setRoomName] = useState('');
+  const [roomDesc, setRoomDesc] = useState('');
+
+  const [pieceTitle, setPieceTitle] = useState('');
+  const [pieceSubtitle, setPieceSubtitle] = useState('');
+  const [pieceType, setPieceType] = useState<PieceType>('text');
+  const [pieceBody, setPieceBody] = useState('');
+  const [pieceUrl, setPieceUrl] = useState('');
+  const [pieceFile, setPieceFile] = useState<File | null>(null);
+  const [savingPiece, setSavingPiece] = useState(false);
+
+  const backupInputRef = useRef<HTMLInputElement | null>(null);
+
+  const selectIsland = (islandId: string) => {
+    const found = visibleIslands.find((i) => i.id === islandId);
+    if (!found) return;
+    setIslTitle(found.title);
+    setIslLabel(found.mapLabel);
+    setIslEyebrow(found.eyebrow);
+    setIslDesc(found.description);
+    setIslFooter(found.footer);
+    setIslBiome(found.biome);
+    setIslX(found.x);
+    setIslY(found.y);
+    setShowNewRoomForm(false);
+    setView({ mode: 'island', islandId });
+  };
+
+  const openRoom = (islandId: string, roomId: string) => {
+    const room = getRooms(islandId).find((r) => r.id === roomId);
+    if (!room) return;
+    setRoomName(room.name);
+    setRoomDesc(room.description);
+    setView({ mode: 'room', islandId, roomId });
+  };
+
+  const openPieceForm = (islandId: string, roomId: string, pieceId: string | null) => {
+    const existing = pieceId
+      ? getPieces(islandId, roomId).find((p) => p.id === pieceId) || null
+      : null;
+
+    setPieceTitle(existing?.title || '');
+    setPieceSubtitle(existing?.subtitle || '');
+    const inferredType: PieceType = existing
+      ? existing.type ||
+        (existing.kind === 'painting' || existing.kind === 'image'
+          ? 'image'
+          : existing.kind === 'link'
+            ? 'link'
+            : existing.kind === 'audio'
+              ? 'audio'
+              : existing.kind === 'video'
+                ? 'video'
+                : 'text')
+      : 'text';
+    setPieceType(inferredType);
+    setPieceBody(existing?.body || existing?.lines?.join('\n\n') || '');
+    setPieceUrl(existing?.url || '');
+    setPieceFile(null);
+    setView({ mode: 'piece', islandId, roomId, pieceId });
+  };
+
+  const handleSaveAppearance = async () => {
+    if (source.kind === 'local') {
+      source.onUpdateTheme?.(metaTheme);
+      setNotice('Colores y atmósfera del museo local actualizados.');
+      return;
+    }
+
+    setSavingMeta(true);
+    try {
+      const updated = await updateCloudMuseumMetadata(source.museum, {
+        title: metaTitle,
+        subtitle: metaSubtitle,
+        authorName: metaAuthor,
+        category: metaCategory,
+        theme: metaTheme,
+        defaultCharacterId: metaCharacter,
+        isPublic: metaIsPublic,
+      });
+      source.onSyncMuseum(updated, source.pieces);
+      setNotice('Apariencia, colores e identidad del museo guardados en la nube.');
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'No se pudo guardar la apariencia.');
+    } finally {
+      setSavingMeta(false);
+    }
+  };
+
+  const handleDeleteEntireCloudMuseum = () => {
+    if (source.kind !== 'cloud') return;
+    setConfirmState({
+      message: `¿Eliminar por completo el museo «${source.museum.title}» y todas sus piezas publicadas? Esta acción no se puede deshacer.`,
+      confirmLabel: 'Sí, eliminar museo',
+      onConfirm: async () => {
+        await deleteCloudMuseum(source.museum.id, source.museum.ownerId);
+        source.onDeletedMuseum(source.museum.id);
+      },
+    });
+  };
+
+  const handleSaveIsland = async () => {
+    if (!activeIsland) return;
+    const updatedMeta = {
+      mapLabel: islLabel.trim() || activeIsland.mapLabel,
+      title: islTitle.trim() || activeIsland.title,
+      eyebrow: islEyebrow.trim(),
+      description: islDesc,
+      footer: islFooter,
+      biome: islBiome,
+      x: Math.max(10, Math.min(90, Number(islX) || activeIsland.x)),
+      y: Math.max(18, Math.min(86, Number(islY) || activeIsland.y)),
+    };
+
+    if (source.kind === 'local') {
+      const nextState: MuseumState = {
+        ...source.state,
+        customIslands: activeIsland.isOriginal
+          ? source.state.customIslands
+          : source.state.customIslands.map((ci) =>
+              ci.id === activeIsland.id ? { ...ci, ...updatedMeta } : ci
+            ),
+        islandMeta: {
+          ...source.state.islandMeta,
+          [activeIsland.id]: updatedMeta,
+        },
+      };
+      source.onUpdateState(nextState);
+      setNotice(`Isla «${updatedMeta.title}» actualizada.`);
+    } else {
+      try {
+        const nextIslands = source.museum.islands.map((isl) =>
+          isl.id === activeIsland.id ? { ...isl, ...updatedMeta } : isl
+        );
+        const updatedMuseum = await updateCloudMuseumStructure(
+          source.museum,
+          nextIslands,
+          source.museum.rooms,
+          source.pieces.length
+        );
+        source.onSyncMuseum(updatedMuseum, source.pieces);
+        setNotice(`Isla «${updatedMeta.title}» guardada en la nube.`);
+      } catch (err) {
+        setNotice(err instanceof Error ? err.message : 'No se pudo actualizar la isla.');
+      }
+    }
+  };
+
+  const handleCreateNewIsland = async () => {
+    if (!newIslTitle.trim()) {
+      setNotice('Escribe un nombre para la nueva isla.');
+      return;
+    }
+
+    if (source.kind === 'local') {
+      const { nextState, newIsland } = createNewIsland(source.state, {
+        title: newIslTitle,
+        mapLabel: newIslLabel || newIslTitle,
+        biome: newIslBiome,
+        eyebrow: newIslEyebrow,
+        description: newIslDesc,
+        footer: newIslFooter,
+        x: newIslX,
+        y: newIslY,
+      });
+      source.onUpdateState(nextState);
+      setNotice(`Isla «${newIsland.title}» creada en el archipiélago.`);
+
+      setNewIslTitle('');
+      setNewIslLabel('');
+      setNewIslDesc('');
+      setIslTitle(newIsland.title);
+      setIslLabel(newIsland.mapLabel);
+      setIslEyebrow(newIsland.eyebrow);
+      setIslDesc(newIsland.description);
+      setIslFooter(newIsland.footer);
+      setIslBiome(newIsland.biome);
+      setIslX(newIsland.x);
+      setIslY(newIsland.y);
+      setView({ mode: 'island', islandId: newIsland.id });
+      return;
+    }
+
+    if (source.museum.islands.length >= 20) {
+      setNotice('El museo en la nube admite un máximo de 20 islas.');
+      return;
+    }
+    if (source.museum.rooms.length >= 60) {
+      setNotice('El museo alcanzó el límite de 60 salas.');
+      return;
+    }
+
+    const newIslandId = makeId('isl');
+    const newIsland: Island = {
+      id: newIslandId,
+      isOriginal: false,
+      biome: newIslBiome,
+      x: Math.max(10, Math.min(90, Number(newIslX) || 50)),
+      y: Math.max(18, Math.min(86, Number(newIslY) || 50)),
+      mapLabel: (newIslLabel || newIslTitle).trim().toUpperCase(),
+      title: newIslTitle.trim(),
+      eyebrow: newIslEyebrow.trim() || 'NUEVA ISLA',
+      description: newIslDesc.trim(),
+      footer: newIslFooter.trim() || 'Colección insular',
+    };
+    const defaultRoom: Room = {
+      id: makeId('room'),
+      islandId: newIslandId,
+      name: `Sala de ${newIsland.title}`,
+      description: 'Espacio inicial de exhibición.',
+    };
+
+    try {
+      const nextIslands = [...source.museum.islands, newIsland];
+      const nextRooms = [...source.museum.rooms, defaultRoom];
+      const updatedMuseum = await updateCloudMuseumStructure(
+        source.museum,
+        nextIslands,
+        nextRooms,
+        source.pieces.length
+      );
+      source.onSyncMuseum(updatedMuseum, source.pieces);
+      setNotice(`Isla «${newIsland.title}» creada en la nube.`);
+      setNewIslTitle('');
+      setNewIslLabel('');
+      setNewIslDesc('');
+      setIslTitle(newIsland.title);
+      setIslLabel(newIsland.mapLabel);
+      setIslEyebrow(newIsland.eyebrow);
+      setIslDesc(newIsland.description);
+      setIslFooter(newIsland.footer);
+      setIslBiome(newIsland.biome);
+      setIslX(newIsland.x);
+      setIslY(newIsland.y);
+      setView({ mode: 'island', islandId: newIsland.id });
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'No se pudo crear la isla.');
+    }
+  };
+
+  const handleDeleteIsland = (islandId: string) => {
+    const target = visibleIslands.find((i) => i.id === islandId);
+    if (!target) return;
+    if (visibleIslands.length <= 1) {
+      setNotice('El archipiélago necesita al menos una isla visible.');
+      return;
+    }
+
+    const message = target.isOriginal
+      ? `¿Quitar «${target.title}» del mapa? Podrás restaurar esta isla original más adelante desde el Editor.`
+      : `¿Eliminar por completo la isla «${target.title}» y todas sus salas y piezas? Esta acción no se puede deshacer.`;
+
+    setConfirmState({
+      message,
+      confirmLabel: target.isOriginal ? 'Quitar del mapa' : 'Sí, eliminar isla',
+      onConfirm: async () => {
+        if (source.kind === 'local') {
+          const nextState = await deleteCompleteIsland(source.state, islandId);
+          source.onUpdateState(nextState);
+          const remaining = getResolvedIslands(nextState, false);
+          const nextFirst = remaining[0];
+          if (nextFirst) {
+            setIslTitle(nextFirst.title);
+            setIslLabel(nextFirst.mapLabel);
+            setIslEyebrow(nextFirst.eyebrow);
+            setIslDesc(nextFirst.description);
+            setIslFooter(nextFirst.footer);
+            setIslBiome(nextFirst.biome);
+            setIslX(nextFirst.x);
+            setIslY(nextFirst.y);
+            setView({ mode: 'island', islandId: nextFirst.id });
+          }
+          setNotice(`Isla «${target.title}» eliminada del mapa.`);
+          return;
+        }
+
+        const nextIslands = source.museum.islands.filter((i) => i.id !== islandId);
+        const nextRooms = source.museum.rooms.filter((r) => r.islandId !== islandId);
+        const piecesToRemove = source.pieces
+          .filter((p) => p.islandId === islandId)
+          .map((p) => p.id);
+        const remainingPieces = source.pieces.filter((p) => p.islandId !== islandId);
+
+        await deleteCloudPiecesInIds(
+          source.museum.id,
+          piecesToRemove,
+          remainingPieces.length,
+          nextIslands,
+          nextRooms
+        );
+        source.onSyncMuseum(
+          {
+            ...source.museum,
+            islands: nextIslands,
+            rooms: nextRooms,
+            islandCount: nextIslands.length,
+            pieceCount: remainingPieces.length,
+          },
+          remainingPieces
+        );
+        const nextFirst = nextIslands[0];
+        if (nextFirst) {
+          setIslTitle(nextFirst.title);
+          setIslLabel(nextFirst.mapLabel);
+          setIslEyebrow(nextFirst.eyebrow);
+          setIslDesc(nextFirst.description);
+          setIslFooter(nextFirst.footer);
+          setIslBiome(nextFirst.biome);
+          setIslX(nextFirst.x);
+          setIslY(nextFirst.y);
+          setView({ mode: 'island', islandId: nextFirst.id });
+        }
+        setNotice(`Isla «${target.title}» eliminada.`);
+      },
+    });
+  };
+
+  const handleRestoreOriginalIsland = (islandId: string) => {
+    if (source.kind !== 'local') return;
+    const nextState: MuseumState = {
+      ...source.state,
+      hiddenIslands: source.state.hiddenIslands.filter((id) => id !== islandId),
+    };
+    source.onUpdateState(nextState);
+    setNotice('Isla original restaurada en el archipiélago.');
+  };
+
+  const handleCreateRoom = async () => {
+    if (!activeIsland) return;
+    const trimmed = creatingRoomName.trim();
+    if (!trimmed) {
+      setNotice('Escribe un nombre para la sala.');
+      return;
+    }
+
+    const newRoom: Room = {
+      id: makeId('room'),
+      islandId: activeIsland.id,
+      name: trimmed,
+      description: '',
+    };
+
+    if (source.kind === 'local') {
+      const nextState: MuseumState = {
+        ...source.state,
+        rooms: {
+          ...source.state.rooms,
+          [activeIsland.id]: [...getRoomsForIsland(source.state, activeIsland.id), newRoom],
+        },
+      };
+      source.onUpdateState(nextState);
+      setCreatingRoomName('');
+      setShowNewRoomForm(false);
+      setNotice(`Sala «${trimmed}» creada.`);
+      return;
+    }
+
+    if (source.museum.rooms.length >= 60) {
+      setNotice('Has alcanzado el máximo de 60 salas en este museo.');
+      return;
+    }
+
+    try {
+      const nextRooms = [...source.museum.rooms, newRoom];
+      const updatedMuseum = await updateCloudMuseumStructure(
+        source.museum,
+        source.museum.islands,
+        nextRooms,
+        source.pieces.length
+      );
+      source.onSyncMuseum(updatedMuseum, source.pieces);
+      setCreatingRoomName('');
+      setShowNewRoomForm(false);
+      setNotice(`Sala «${trimmed}» creada.`);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'No se pudo crear la sala.');
+    }
+  };
+
+  const handleDeleteRoom = (islandId: string, roomId: string) => {
+    const rooms = getRooms(islandId);
+    if (rooms.length <= 1) {
+      setNotice('Cada isla debe conservar al menos una sala.');
+      return;
+    }
+    const pieces = getPieces(islandId, roomId);
+    setConfirmState({
+      message: `¿Eliminar esta sala y sus ${pieces.length} piezas?`,
+      confirmLabel: 'Sí, eliminar sala',
+      onConfirm: async () => {
+        if (source.kind === 'local') {
+          for (const p of pieces) {
+            if (p.mediaKey) await deleteMedia(p.mediaKey);
+          }
+          const nextHidden = [...source.state.hidden];
+          const nextOverrides = { ...source.state.overrides };
+          for (const p of pieces) {
+            if (!p.custom) {
+              if (!nextHidden.includes(p.id)) nextHidden.push(p.id);
+              delete nextOverrides[p.id];
+            }
+          }
+          const nextState: MuseumState = {
+            ...source.state,
+            rooms: {
+              ...source.state.rooms,
+              [islandId]: rooms.filter((r) => r.id !== roomId),
+            },
+            customItems: source.state.customItems.filter(
+              (i) => !(i.islandId === islandId && i.roomId === roomId)
+            ),
+            hidden: nextHidden,
+            overrides: nextOverrides,
+          };
+          source.onUpdateState(nextState);
+          setView({ mode: 'island', islandId });
+          setNotice('Sala eliminada.');
+          return;
+        }
+
+        const nextRooms = source.museum.rooms.filter((r) => r.id !== roomId);
+        const removeIds = pieces.map((p) => p.id);
+        const remainingPieces = source.pieces.filter(
+          (p) => !(p.islandId === islandId && p.roomId === roomId)
+        );
+        await deleteCloudPiecesInIds(
+          source.museum.id,
+          removeIds,
+          remainingPieces.length,
+          source.museum.islands,
+          nextRooms
+        );
+        source.onSyncMuseum(
+          {
+            ...source.museum,
+            rooms: nextRooms,
+            pieceCount: remainingPieces.length,
+          },
+          remainingPieces
+        );
+        setView({ mode: 'island', islandId });
+        setNotice('Sala eliminada.');
+      },
+    });
+  };
+
+  const handleSaveRoom = async () => {
+    if (view.mode !== 'room') return;
+
+    if (source.kind === 'local') {
+      const rooms = getRoomsForIsland(source.state, view.islandId).map((r) =>
+        r.id === view.roomId
+          ? { ...r, name: roomName.trim() || r.name, description: roomDesc }
+          : r
+      );
+      source.onUpdateState({
+        ...source.state,
+        rooms: { ...source.state.rooms, [view.islandId]: rooms },
+      });
+      setNotice('Sala guardada.');
+      return;
+    }
+
+    try {
+      const nextRooms = source.museum.rooms.map((r) =>
+        r.id === view.roomId
+          ? { ...r, name: roomName.trim() || r.name, description: roomDesc }
+          : r
+      );
+      const updatedMuseum = await updateCloudMuseumStructure(
+        source.museum,
+        source.museum.islands,
+        nextRooms,
+        source.pieces.length
+      );
+      source.onSyncMuseum(updatedMuseum, source.pieces);
+      setNotice('Sala guardada en la nube.');
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'No se pudo guardar la sala.');
+    }
+  };
+
+  const handleSavePiece = async () => {
+    if (view.mode !== 'piece') return;
+    const title = pieceTitle.trim();
+    if (!title) {
+      setNotice('Escribe un título para la pieza.');
+      return;
+    }
+
+    setSavingPiece(true);
+    try {
+      const existing = view.pieceId
+        ? getPieces(view.islandId, view.roomId).find((p) => p.id === view.pieceId) || null
+        : null;
+
+      if (source.kind === 'local') {
+        const isCustom = existing ? Boolean(existing.custom) : true;
+        let mediaKey = existing?.mediaKey || null;
+
+        if (pieceFile) {
+          const nextMediaKey = makeId('media');
+          const uploadBlob =
+            pieceType === 'image' || pieceFile.type.startsWith('image/')
+              ? await compactImage(pieceFile)
+              : pieceFile;
+          await putMedia(nextMediaKey, uploadBlob);
+          if (existing?.mediaKey && existing.mediaKey !== nextMediaKey) {
+            await deleteMedia(existing.mediaKey);
+          }
+          mediaKey = nextMediaKey;
+        }
+
+        if (isCustom) {
+          const newPiece: MuseumPiece = {
+            id: existing?.id || makeId('piece'),
+            islandId: view.islandId,
+            roomId: view.roomId,
+            title,
+            subtitle: pieceSubtitle.trim(),
+            body: pieceBody,
+            kind:
+              pieceType === 'image'
+                ? 'image'
+                : pieceType === 'audio'
+                  ? 'audio'
+                  : pieceType === 'video'
+                    ? 'video'
+                    : pieceType === 'link'
+                      ? 'link'
+                      : 'text',
+            type: pieceType,
+            url: pieceUrl.trim(),
+            mediaKey,
+            custom: true,
+          };
+
+          const nextCustomItems = existing
+            ? source.state.customItems.map((i) => (i.id === existing.id ? newPiece : i))
+            : [...source.state.customItems, newPiece];
+
+          source.onUpdateState({ ...source.state, customItems: nextCustomItems });
+        } else if (existing) {
+          source.onUpdateState({
+            ...source.state,
+            overrides: {
+              ...source.state.overrides,
+              [existing.id]: {
+                ...(source.state.overrides[existing.id] || {}),
+                title,
+                subtitle: pieceSubtitle.trim(),
+                body: pieceBody,
+                ...(pieceFile ? { type: pieceType, mediaKey } : {}),
+              },
+            },
+          });
+        }
+
+        setNotice(`Pieza «${title}» guardada.`);
+        openRoom(view.islandId, view.roomId);
+        return;
+      }
+
+      // Modo nube (Firestore)
+      let mediaDataUrl = existing?.mediaDataUrl || '';
+      if (pieceFile) {
+        if (!pieceFile.type.startsWith('image/')) {
+          setNotice(
+            'Para audio o vídeo en museos en la nube pega un enlace directo (MP3, MP4, YouTube, etc.) en el campo URL.'
+          );
+          setSavingPiece(false);
+          return;
+        }
+        mediaDataUrl = await compactImageToDataUrl(pieceFile, 155000);
+      }
+
+      const { piece: savedPiece, nextPieceCount } = await saveCloudPiece(
+        source.museum,
+        {
+          id: existing?.id,
+          islandId: view.islandId,
+          roomId: view.roomId,
+          title,
+          subtitle: pieceSubtitle.trim(),
+          body: pieceBody,
+          type: pieceType,
+          url: pieceUrl.trim(),
+          mediaDataUrl,
+          curatedFrom: existing?.curatedFrom,
+        },
+        source.pieces.length
+      );
+
+      const nextPieces = existing
+        ? source.pieces.map((p) => (p.id === savedPiece.id ? savedPiece : p))
+        : [...source.pieces, savedPiece];
+      source.onSyncMuseum({ ...source.museum, pieceCount: nextPieceCount }, nextPieces);
+      setNotice(`Pieza «${title}» guardada en la nube.`);
+      openRoom(view.islandId, view.roomId);
+    } catch (error) {
+      setNotice(
+        'No se pudo guardar la pieza: ' +
+          (error instanceof Error ? error.message : 'verifica el tamaño o los permisos.')
+      );
+    } finally {
+      setSavingPiece(false);
+    }
+  };
+
+  const handleRemovePiece = (islandId: string, roomId: string, piece: MuseumPiece) => {
+    setConfirmState({
+      message:
+        isCloud || piece.custom
+          ? `¿Eliminar la pieza «${piece.title}»?`
+          : `¿Ocultar la pieza original «${piece.title}»? Podrás restaurarla después en esta sala.`,
+      confirmLabel: isCloud || piece.custom ? 'Sí, eliminar' : 'Sí, ocultar',
+      onConfirm: async () => {
+        if (source.kind === 'local') {
+          if (piece.mediaKey) await deleteMedia(piece.mediaKey);
+          if (piece.custom) {
+            source.onUpdateState({
+              ...source.state,
+              customItems: source.state.customItems.filter((i) => i.id !== piece.id),
+            });
+          } else {
+            const nextOverrides = { ...source.state.overrides };
+            delete nextOverrides[piece.id];
+            source.onUpdateState({
+              ...source.state,
+              hidden: Array.from(new Set([...source.state.hidden, piece.id])),
+              overrides: nextOverrides,
+            });
+          }
+          setNotice(piece.custom ? 'Pieza eliminada.' : 'Pieza original ocultada.');
+          return;
+        }
+
+        const nextPieceCount = await deleteCloudPiece(
+          source.museum.id,
+          piece.id,
+          source.pieces.length
+        );
+        const nextPieces = source.pieces.filter((p) => p.id !== piece.id);
+        source.onSyncMuseum({ ...source.museum, pieceCount: nextPieceCount }, nextPieces);
+        setNotice('Pieza eliminada de la sala.');
+      },
+    });
+  };
+
+  const handleRestoreRoomHiddenPieces = (islandId: string, roomId: string) => {
+    if (source.kind !== 'local') return;
+    const baseInRoom = getBasePiecesForIsland(islandId)
+      .filter((p) => p.roomId === roomId)
+      .map((p) => p.id);
+    source.onUpdateState({
+      ...source.state,
+      hidden: source.state.hidden.filter((id) => !baseInRoom.includes(id)),
+    });
+    setNotice('Piezas originales restauradas en esta sala.');
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Editor del museo"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[#02111a]/85 p-3 backdrop-blur-sm sm:p-5"
+    >
+      <div className="relative flex h-[92vh] max-h-[860px] w-full max-w-[1140px] flex-col overflow-hidden border-[3px] border-[#e1c875] bg-[#0b2b39] text-[#f8f4df] shadow-[0_24px_80px_rgba(0,0,0,0.55),8px_8px_0_rgba(0,0,0,0.22)]">
+        {/* Cabecera del Editor */}
+        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[#f3d889]/30 bg-gradient-to-r from-[#164e59] to-[#092b3b] px-5 py-4">
+          <div>
+            <p className="font-pixel text-[9px] text-[#f4d47d]">
+              {isCloud ? `${source.museum.title.toUpperCase()} · EN LA NUBE` : 'MUSEO 404 · TALLER INTERNO'}
+            </p>
+            <h2 className="mt-1.5 text-2xl font-bold text-[#fff9e8]">Editor del museo</h2>
+            <p className="text-sm text-[#c4ded2]">
+              Personaliza colores, crea islas y salas, y sube obras, cartas de menú o recomendaciones.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {source.kind === 'local' && (
+              <>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await exportMuseumBackup(source.state);
+                    setNotice('Copia de seguridad exportada.');
+                  }}
+                  className="inline-flex items-center gap-1.5 border border-[#d8c47b] bg-[#062230] px-3 py-2 text-xs font-semibold text-[#fff5d7] hover:bg-[#174d58]"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Exportar copia
+                </button>
+                <button
+                  type="button"
+                  onClick={() => backupInputRef.current?.click()}
+                  className="inline-flex items-center gap-1.5 border border-[#d8c47b] bg-[#062230] px-3 py-2 text-xs font-semibold text-[#fff5d7] hover:bg-[#174d58]"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  Importar copia
+                </button>
+                <input
+                  ref={backupInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  hidden
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    try {
+                      const imported = await importMuseumBackup(file);
+                      source.onUpdateState(imported);
+                      const first = getResolvedIslands(imported, false)[0];
+                      if (first) selectIsland(first.id);
+                      setNotice('Copia importada correctamente.');
+                    } catch (err) {
+                      setNotice(
+                        'No se pudo importar: ' +
+                          (err instanceof Error ? err.message : 'archivo inválido')
+                      );
+                    } finally {
+                      e.target.value = '';
+                    }
+                  }}
+                />
+              </>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Cerrar editor"
+              className="flex h-9 w-9 items-center justify-center border border-[#d8c47b] bg-[#174d58] text-white hover:bg-[#b25f37]"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </header>
+
+        {/* Cuerpo: Sidebar de islas + panel principal */}
+        <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[245px_minmax(0,1fr)]">
+          <nav
+            aria-label="Islas del museo"
+            className="museum-scroll flex flex-row gap-2 overflow-x-auto border-b border-[#f3d889]/20 bg-[#082532] p-3 md:flex-col md:overflow-y-auto md:border-b-0 md:border-r"
+          >
+            <button
+              type="button"
+              onClick={() => setView({ mode: 'appearance' })}
+              className={`flex shrink-0 items-center justify-center gap-2 border px-3 py-2.5 text-sm font-bold transition-colors ${
+                view.mode === 'appearance'
+                  ? 'border-[#f1d17c] bg-[#1d6873] text-[#fff9e8]'
+                  : 'border-[#f1d17c]/45 bg-[#0f3644] text-[#f4d47d] hover:bg-[#174d58]'
+              }`}
+            >
+              <Palette className="h-4 w-4" />
+              <span>Colores y diseño</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                const nextPos = suggestIslandPosition(visibleIslands);
+                setNewIslX(nextPos.x);
+                setNewIslY(nextPos.y);
+                setView({ mode: 'new-island' });
+              }}
+              className={`flex shrink-0 items-center justify-center gap-2 border border-dashed px-3 py-2.5 text-sm font-bold transition-colors ${
+                view.mode === 'new-island'
+                  ? 'border-[#f1d17c] bg-[#bd7544] text-[#fff9e8]'
+                  : 'border-[#f1d17c]/70 bg-[#174d58]/50 text-[#f4d47d] hover:bg-[#174d58]'
+              }`}
+            >
+              <Plus className="h-4 w-4" />
+              <span>Nueva isla</span>
+            </button>
+
+            {visibleIslands.map((isl) => {
+              const isSelected =
+                view.mode !== 'new-island' && view.mode !== 'appearance' && view.islandId === isl.id;
+              const rCount = getRooms(isl.id).length;
+              const pCount = getIslandPiecesCount(isl.id);
+              return (
+                <button
+                  key={isl.id}
+                  type="button"
+                  onClick={() => selectIsland(isl.id)}
+                  className={`min-w-[155px] shrink-0 border p-3 text-left transition-colors md:min-w-0 md:w-full ${
+                    isSelected
+                      ? 'border-[#f1d17c] bg-[#dbb85c]/15'
+                      : 'border-[#e0d7a5]/20 bg-white/[0.04] hover:bg-white/[0.08]'
+                  }`}
+                >
+                  <strong className="block truncate text-base font-semibold text-[#fff9e8]">
+                    {isl.title}
+                  </strong>
+                  <span className="mt-1 block text-xs text-[#9fc4b8] tabular-nums">
+                    {rCount} salas · {pCount} piezas {!isl.isOriginal ? '· Propia' : ''}
+                  </span>
+                </button>
+              );
+            })}
+
+            {hiddenOriginals.length > 0 && (
+              <div className="mt-2 hidden border-t border-white/10 pt-3 md:block">
+                <p className="mb-2 text-xs text-[#9fc4b8]">Islas originales ocultas</p>
+                {hiddenOriginals.map((isl) => (
+                  <button
+                    key={isl.id}
+                    type="button"
+                    onClick={() => handleRestoreOriginalIsland(isl.id)}
+                    className="mb-1.5 flex w-full items-center justify-between border border-white/15 bg-white/5 px-2.5 py-2 text-xs text-[#d7ebe2] hover:bg-white/15"
+                  >
+                    <span className="truncate">{isl.title}</span>
+                    <RotateCcw className="h-3.5 w-3.5 shrink-0 text-[#f4d47d]" />
+                  </button>
+                ))}
+              </div>
+            )}
+          </nav>
+
+          {/* Contenido del Editor */}
+          <div className="museum-scroll min-w-0 overflow-y-auto p-5 sm:p-6">
+            {view.mode === 'appearance' && (
+              <div className="space-y-6">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="font-pixel text-[10px] leading-relaxed text-[#f4d47d]">
+                    COLORES, DISEÑO E IDENTIDAD DEL MUSEO
+                  </h3>
+                  {isCloud && (
+                    <button
+                      type="button"
+                      onClick={handleDeleteEntireCloudMuseum}
+                      className="inline-flex items-center gap-1.5 border border-[#bd7967] bg-[#603d3d] px-3 py-1.5 text-xs text-[#ffd5c7] hover:bg-[#7b4949]"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Eliminar museo
+                    </button>
+                  )}
+                </div>
+
+                {isCloud && (
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1.5 block text-xs text-[#c7ded2]">Título del museo</label>
+                      <input
+                        value={metaTitle}
+                        onChange={(e) => setMetaTitle(e.target.value)}
+                        className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-[#c7ded2]">Nombre de autor o proyecto</label>
+                      <input
+                        value={metaAuthor}
+                        onChange={(e) => setMetaAuthor(e.target.value)}
+                        className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="mb-1.5 block text-xs text-[#c7ded2]">Subtítulo</label>
+                      <input
+                        value={metaSubtitle}
+                        onChange={(e) => setMetaSubtitle(e.target.value)}
+                        className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-[#c7ded2]">Categoría</label>
+                      <select
+                        value={metaCategory}
+                        onChange={(e) => setMetaCategory(e.target.value as MuseumCategory)}
+                        className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                      >
+                        {(Object.entries(CATEGORY_META) as [MuseumCategory, { label: string }][]).map(
+                          ([k, v]) => (
+                            <option key={k} value={k}>
+                              {v.label}
+                            </option>
+                          )
+                        )}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs text-[#c7ded2]">Personaje sugerido</label>
+                      <select
+                        value={metaCharacter}
+                        onChange={(e) => setMetaCharacter(e.target.value as CharacterId)}
+                        className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                      >
+                        {CHARACTER_PROFILES.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <label className="flex items-center gap-3 border border-white/15 bg-white/[0.04] p-3 text-sm sm:col-span-2">
+                      <input
+                        type="checkbox"
+                        checked={metaIsPublic}
+                        onChange={(e) => setMetaIsPublic(e.target.checked)}
+                        className="h-4 w-4 accent-[#f4d47d]"
+                      />
+                      <span>Visible en el directorio público de museos</span>
+                    </label>
+                  </div>
+                )}
+
+                <div>
+                  <p className="mb-2.5 text-xs font-semibold text-[#c7ded2]">Paletas listas</p>
+                  <div className="mb-4 flex flex-wrap gap-2">
+                    {MUSEUM_THEME_PRESETS.map((preset) => (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => setMetaTheme(preset.config)}
+                        className={`flex items-center gap-2 border px-2.5 py-1.5 text-xs ${
+                          metaTheme.presetId === preset.id
+                            ? 'border-[#f4d47d] bg-[#175160] text-[#fff9e8]'
+                            : 'border-[#e0d7a5]/25 bg-white/[0.04] text-[#c4ded2] hover:bg-white/[0.08]'
+                        }`}
+                      >
+                        <span
+                          className="h-3.5 w-3.5 border border-black/40"
+                          style={{ backgroundColor: preset.config.skyColor }}
+                        />
+                        <span
+                          className="h-3.5 w-3.5 border border-black/40"
+                          style={{ backgroundColor: preset.config.oceanColor }}
+                        />
+                        <span>{preset.name}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+                    <label className="border border-white/15 bg-white/[0.04] p-2.5 text-xs">
+                      <span className="mb-1.5 block text-[#c7ded2]">Cielo / Niebla</span>
+                      <input
+                        type="color"
+                        value={metaTheme.skyColor}
+                        onChange={(e) =>
+                          setMetaTheme((t) => ({ ...t, presetId: 'custom', skyColor: e.target.value }))
+                        }
+                        className="h-8 w-full cursor-pointer border-0 bg-transparent"
+                      />
+                    </label>
+                    <label className="border border-white/15 bg-white/[0.04] p-2.5 text-xs">
+                      <span className="mb-1.5 block text-[#c7ded2]">Océano</span>
+                      <input
+                        type="color"
+                        value={metaTheme.oceanColor}
+                        onChange={(e) =>
+                          setMetaTheme((t) => ({ ...t, presetId: 'custom', oceanColor: e.target.value }))
+                        }
+                        className="h-8 w-full cursor-pointer border-0 bg-transparent"
+                      />
+                    </label>
+                    <label className="border border-white/15 bg-white/[0.04] p-2.5 text-xs">
+                      <span className="mb-1.5 block text-[#c7ded2]">Acento dorado</span>
+                      <input
+                        type="color"
+                        value={metaTheme.accentColor}
+                        onChange={(e) =>
+                          setMetaTheme((t) => ({ ...t, presetId: 'custom', accentColor: e.target.value }))
+                        }
+                        className="h-8 w-full cursor-pointer border-0 bg-transparent"
+                      />
+                    </label>
+                    <label className="border border-white/15 bg-white/[0.04] p-2.5 text-xs">
+                      <span className="mb-1.5 block text-[#c7ded2]">Paneles</span>
+                      <input
+                        type="color"
+                        value={metaTheme.surfaceColor}
+                        onChange={(e) =>
+                          setMetaTheme((t) => ({ ...t, presetId: 'custom', surfaceColor: e.target.value }))
+                        }
+                        className="h-8 w-full cursor-pointer border-0 bg-transparent"
+                      />
+                    </label>
+                    <div className="col-span-2 border border-white/15 bg-white/[0.04] p-2.5 text-xs sm:col-span-1">
+                      <span className="mb-1.5 block text-[#c7ded2]">Luz de salas 2D</span>
+                      <select
+                        value={metaTheme.roomThemeId}
+                        onChange={(e) =>
+                          setMetaTheme((t) => ({ ...t, roomThemeId: e.target.value as ThemeId }))
+                        }
+                        className="w-full border border-[#537c79] bg-[#f0eedc] px-2 py-1 text-xs text-[#183b42]"
+                      >
+                        <option value="classic">Clásico</option>
+                        <option value="night">Nocturno</option>
+                        <option value="twilight">Crepúsculo</option>
+                        <option value="gameboy">Consola 89</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <button
+                    type="button"
+                    disabled={savingMeta}
+                    onClick={handleSaveAppearance}
+                    className="border border-[#f2d17b] bg-[#bd7544] px-4 py-2 text-sm font-semibold text-[#fff9e8] hover:bg-[#a24d2e] disabled:opacity-60"
+                  >
+                    {savingMeta ? 'Guardando...' : 'Guardar colores y diseño'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {view.mode === 'new-island' && (
+              <div>
+                <h3 className="font-pixel mb-4 text-[10px] leading-relaxed text-[#f4d47d]">
+                  CREAR NUEVA ISLA EN EL ARCHIPIÉLAGO
+                </h3>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1.5 block text-xs text-[#c7ded2]">Nombre de la isla</label>
+                    <input
+                      value={newIslTitle}
+                      onChange={(e) => setNewIslTitle(e.target.value)}
+                      placeholder="Ej. Archivo del Viento"
+                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                      Rótulo visible en el mapa
+                    </label>
+                    <input
+                      value={newIslLabel}
+                      onChange={(e) => setNewIslLabel(e.target.value)}
+                      placeholder="Ej. ARCHIVO DEL VIENTO"
+                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                      Bioma y arquitectura
+                    </label>
+                    <select
+                      value={newIslBiome}
+                      onChange={(e) => setNewIslBiome(e.target.value as IslandBiome)}
+                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                    >
+                      {Object.entries(BIOME_LABELS).map(([key, val]) => (
+                        <option key={key} value={key}>
+                          {val.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs text-[#c7ded2]">Rótulo superior</label>
+                    <input
+                      value={newIslEyebrow}
+                      onChange={(e) => setNewIslEyebrow(e.target.value)}
+                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="mb-1.5 block text-xs text-[#c7ded2]">Descripción</label>
+                    <textarea
+                      rows={3}
+                      value={newIslDesc}
+                      onChange={(e) => setNewIslDesc(e.target.value)}
+                      placeholder="Describe qué habita en este nuevo territorio..."
+                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                      Posición horizontal en mapa ({newIslX}%)
+                    </label>
+                    <input
+                      type="range"
+                      min={12}
+                      max={88}
+                      value={newIslX}
+                      onChange={(e) => setNewIslX(Number(e.target.value))}
+                      className="w-full accent-[#e1c875]"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                      Posición vertical en mapa ({newIslY}%)
+                    </label>
+                    <input
+                      type="range"
+                      min={20}
+                      max={85}
+                      value={newIslY}
+                      onChange={(e) => setNewIslY(Number(e.target.value))}
+                      className="w-full accent-[#e1c875]"
+                    />
+                  </div>
+                </div>
+                <p className="mt-3 text-xs text-[#a9c7bc]">
+                  {BIOME_LABELS[newIslBiome].desc}. Se conectará automáticamente mediante un puente al Patio central y contará con una sala inicial lista para explorar en 2D.
+                </p>
+                <div className="mt-5 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCreateNewIsland}
+                    className="border border-[#f2d17b] bg-[#bd7544] px-4 py-2 text-sm font-semibold text-[#fff9e8] hover:bg-[#a24d2e]"
+                  >
+                    Crear isla en el mapa
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => visibleIslands[0] && selectIsland(visibleIslands[0].id)}
+                    className="border border-[#d8c47b]/60 bg-[#062230] px-4 py-2 text-sm text-[#fff5d7]"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {view.mode === 'island' && activeIsland && (
+              <div>
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="font-pixel text-[10px] leading-relaxed text-[#f4d47d]">
+                    CONFIGURAR ISLA
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteIsland(activeIsland.id)}
+                    className="inline-flex items-center gap-1.5 border border-[#bd7967] bg-[#603d3d] px-3 py-1.5 text-xs text-[#ffd5c7] hover:bg-[#7b4949]"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    {activeIsland.isOriginal ? 'Quitar del mapa' : 'Eliminar isla'}
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                      Nombre visible en el mapa
+                    </label>
+                    <input
+                      value={islLabel}
+                      onChange={(e) => setIslLabel(e.target.value)}
+                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs text-[#c7ded2]">Nombre de la isla</label>
+                    <input
+                      value={islTitle}
+                      onChange={(e) => setIslTitle(e.target.value)}
+                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs text-[#c7ded2]">Bioma visual</label>
+                    <select
+                      value={islBiome}
+                      onChange={(e) => setIslBiome(e.target.value as IslandBiome)}
+                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                    >
+                      {Object.entries(BIOME_LABELS).map(([key, val]) => (
+                        <option key={key} value={key}>
+                          {val.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs text-[#c7ded2]">Rótulo superior</label>
+                    <input
+                      value={islEyebrow}
+                      onChange={(e) => setIslEyebrow(e.target.value)}
+                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                      Descripción de la isla
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={islDesc}
+                      onChange={(e) => setIslDesc(e.target.value)}
+                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                      Posición X ({islX}%)
+                    </label>
+                    <input
+                      type="range"
+                      min={10}
+                      max={90}
+                      step={0.5}
+                      value={islX}
+                      onChange={(e) => setIslX(Number(e.target.value))}
+                      className="w-full accent-[#e1c875]"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                      Posición Y ({islY}%)
+                    </label>
+                    <input
+                      type="range"
+                      min={18}
+                      max={86}
+                      step={0.5}
+                      value={islY}
+                      onChange={(e) => setIslY(Number(e.target.value))}
+                      className="w-full accent-[#e1c875]"
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-4">
+                  <button
+                    type="button"
+                    onClick={handleSaveIsland}
+                    className="border border-[#f2d17b] bg-[#bd7544] px-4 py-2 text-sm font-semibold text-[#fff9e8] hover:bg-[#a24d2e]"
+                  >
+                    Guardar cambios de isla
+                  </button>
+                </div>
+
+                <hr className="my-6 border-[#f3d889]/20" />
+
+                <h3 className="font-pixel mb-2 text-[10px] leading-relaxed text-[#f4d47d]">
+                  SALAS DE ESTA ISLA
+                </h3>
+                <p className="mb-3 text-sm text-[#a9c7bc]">
+                  Cada sala se recorre en modo 2D y reúne su propia colección de piezas.
+                </p>
+
+                <div className="space-y-2">
+                  {getRooms(activeIsland.id).map((room) => (
+                    <div
+                      key={room.id}
+                      className="flex flex-wrap items-center justify-between gap-3 border border-[#e0d7a5]/20 bg-white/[0.045] px-4 py-3"
+                    >
+                      <div>
+                        <strong className="block text-base font-semibold text-[#fff9e8]">
+                          {room.name}
+                        </strong>
+                        <small className="text-xs text-[#a8c8bc] tabular-nums">
+                          {getPieces(activeIsland.id, room.id).length} piezas
+                        </small>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openRoom(activeIsland.id, room.id)}
+                          className="border border-[#6e9a91] bg-[#174653] px-3 py-1.5 text-xs text-[#eff4dd] hover:bg-[#246975]"
+                        >
+                          Abrir sala
+                        </button>
+                        {getRooms(activeIsland.id).length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteRoom(activeIsland.id, room.id)}
+                            className="border border-[#a66e61] bg-[#533b3a] px-3 py-1.5 text-xs text-[#ffd5c7] hover:bg-[#6a4846]"
+                          >
+                            Eliminar
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {showNewRoomForm ? (
+                  <div className="mt-4 flex flex-wrap items-center gap-2 border border-[#e1c875]/40 bg-[#062230] p-3">
+                    <input
+                      value={creatingRoomName}
+                      onChange={(e) => setCreatingRoomName(e.target.value)}
+                      placeholder="Nombre de la nueva sala..."
+                      className="min-w-[220px] flex-1 border border-[#537c79] bg-[#f0eedc] px-3 py-1.5 text-sm text-[#183b42]"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCreateRoom}
+                      className="border border-[#f2d17b] bg-[#bd7544] px-3 py-1.5 text-xs font-semibold text-[#fff9e8]"
+                    >
+                      Crear sala
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowNewRoomForm(false)}
+                      className="border border-white/30 bg-transparent px-3 py-1.5 text-xs text-[#d0e6da]"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowNewRoomForm(true)}
+                    className="mt-4 inline-flex items-center gap-1.5 border border-[#f2d17b] bg-[#bd7544] px-4 py-2 text-sm font-semibold text-[#fff9e8] hover:bg-[#a24d2e]"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Crear sala
+                  </button>
+                )}
+              </div>
+            )}
+
+            {view.mode === 'room' && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => selectIsland(view.islandId)}
+                  className="inline-flex items-center gap-1.5 border border-[#d8c47b]/60 bg-[#062230] px-3 py-1.5 text-xs text-[#fff5d7] hover:bg-[#174d58]"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                  Volver a la isla
+                </button>
+
+                <h3 className="font-pixel mt-5 mb-3 text-[10px] text-[#f4d47d]">EDITAR SALA</h3>
+                <div className="space-y-3">
+                  <div>
+                    <label className="mb-1.5 block text-xs text-[#c7ded2]">Nombre de la sala</label>
+                    <input
+                      value={roomName}
+                      onChange={(e) => setRoomName(e.target.value)}
+                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                      Descripción de la sala
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={roomDesc}
+                      onChange={(e) => setRoomDesc(e.target.value)}
+                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSaveRoom}
+                    className="border border-[#f2d17b] bg-[#bd7544] px-4 py-2 text-sm font-semibold text-[#fff9e8] hover:bg-[#a24d2e]"
+                  >
+                    Guardar sala
+                  </button>
+                </div>
+
+                <hr className="my-6 border-[#f3d889]/20" />
+
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="font-pixel text-[10px] text-[#f4d47d]">PIEZAS DE ESTA SALA</h3>
+                  <button
+                    type="button"
+                    onClick={() => openPieceForm(view.islandId, view.roomId, null)}
+                    className="inline-flex items-center gap-1.5 border border-[#f2d17b] bg-[#bd7544] px-3 py-1.5 text-xs font-semibold text-[#fff9e8] hover:bg-[#a24d2e]"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Cargar pieza
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  {getPieces(view.islandId, view.roomId).map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex flex-wrap items-center justify-between gap-3 border border-[#e0d7a5]/20 bg-white/[0.045] px-4 py-2.5"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <strong className="block truncate text-base font-semibold text-[#fff9e8]">
+                          {item.title}
+                        </strong>
+                        <small className="block truncate text-xs text-[#a8c8bc]">
+                          {item.subtitle || item.kind}
+                          {item.curatedFrom
+                            ? ` · de «${item.curatedFrom.sourceMuseumTitle}»`
+                            : isCloud
+                              ? ' · en la nube'
+                              : item.custom
+                                ? ' · añadida por ti'
+                                : ' · colección original'}
+                        </small>
+                      </div>
+                      <div className="flex shrink-0 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openPieceForm(view.islandId, view.roomId, item.id)}
+                          className="border border-[#6e9a91] bg-[#174653] px-3 py-1.5 text-xs text-[#eff4dd] hover:bg-[#246975]"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRemovePiece(view.islandId, view.roomId, item)}
+                          className="border border-[#bd7967] bg-[#533b3a] px-3 py-1.5 text-xs text-[#ffd5c7] hover:bg-[#6a4846]"
+                        >
+                          {isCloud || item.custom ? 'Eliminar' : 'Ocultar'}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {source.kind === 'local' &&
+                  getBasePiecesForIsland(view.islandId).some(
+                    (p) => p.roomId === view.roomId && source.state.hidden.includes(p.id)
+                  ) && (
+                    <button
+                      type="button"
+                      onClick={() => handleRestoreRoomHiddenPieces(view.islandId, view.roomId)}
+                      className="mt-4 inline-flex items-center gap-1.5 border border-[#d8c47b]/60 bg-[#062230] px-3 py-1.5 text-xs text-[#fff5d7] hover:bg-[#174d58]"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      Restaurar piezas originales ocultas
+                    </button>
+                  )}
+              </div>
+            )}
+
+            {view.mode === 'piece' && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => openRoom(view.islandId, view.roomId)}
+                  className="inline-flex items-center gap-1.5 border border-[#d8c47b]/60 bg-[#062230] px-3 py-1.5 text-xs text-[#fff5d7] hover:bg-[#174d58]"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                  Volver a piezas
+                </button>
+
+                <h3 className="font-pixel mt-5 mb-4 text-[10px] text-[#f4d47d]">
+                  {view.pieceId ? 'EDITAR PIEZA' : 'NUEVA PIEZA'}
+                </h3>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1.5 block text-xs text-[#c7ded2]">Título</label>
+                    <input
+                      value={pieceTitle}
+                      onChange={(e) => setPieceTitle(e.target.value)}
+                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                      Subtítulo, precio o categoría
+                    </label>
+                    <input
+                      value={pieceSubtitle}
+                      onChange={(e) => setPieceSubtitle(e.target.value)}
+                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1.5 block text-xs text-[#c7ded2]">Tipo de contenido</label>
+                    <select
+                      value={pieceType}
+                      onChange={(e) => setPieceType(e.target.value as PieceType)}
+                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                    >
+                      <option value="text">Texto / poema / plato de menú</option>
+                      <option value="image">Imagen / fotografía / portada</option>
+                      <option value="audio">Audio / pista musical</option>
+                      <option value="video">Vídeo</option>
+                      <option value="link">Enlace web / playlist</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                      {isCloud ? 'Subir imagen (se optimiza automáticamente)' : 'Archivo multimedia (opcional)'}
+                    </label>
+                    <input
+                      type="file"
+                      accept={
+                        isCloud
+                          ? 'image/*'
+                          : pieceType === 'audio'
+                            ? 'audio/*'
+                            : pieceType === 'video'
+                              ? 'video/*'
+                              : 'image/*,audio/*,video/*'
+                      }
+                      onChange={(e) => setPieceFile(e.target.files?.[0] || null)}
+                      className="w-full border border-[#537c79] bg-[#e5e3cf] p-1.5 text-xs text-[#183b42]"
+                    />
+                  </div>
+
+                  {(pieceType === 'link' || pieceType === 'audio' || pieceType === 'video') && (
+                    <div className="sm:col-span-2">
+                      <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                        {pieceType === 'link'
+                          ? 'Dirección web (URL)'
+                          : 'URL del archivo o enlace (Spotify, Bandcamp, MP3, MP4...)'}
+                      </label>
+                      <input
+                        type="url"
+                        value={pieceUrl}
+                        onChange={(e) => setPieceUrl(e.target.value)}
+                        placeholder="https://..."
+                        className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                      />
+                    </div>
+                  )}
+
+                  <div className="sm:col-span-2">
+                    <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                      Texto, reseña o descripción
+                    </label>
+                    <textarea
+                      rows={6}
+                      value={pieceBody}
+                      onChange={(e) => setPieceBody(e.target.value)}
+                      placeholder="Escribe o pega aquí el contenido de la pieza..."
+                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-5 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={savingPiece}
+                    onClick={handleSavePiece}
+                    className="border border-[#f2d17b] bg-[#bd7544] px-4 py-2 text-sm font-semibold text-[#fff9e8] hover:bg-[#a24d2e] disabled:opacity-60"
+                  >
+                    {savingPiece ? 'Guardando...' : 'Guardar pieza'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openRoom(view.islandId, view.roomId)}
+                    className="border border-[#d8c47b]/60 bg-[#062230] px-4 py-2 text-sm text-[#fff5d7]"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-[#f3d889]/20 px-5 py-2.5 text-xs text-[#99b9af]">
+          <span>{notice}</span>
+          <span>
+            {isCloud
+              ? 'Sincronizado en Firestore con atribución entre museos.'
+              : 'Las copias de seguridad incluyen islas, salas, textos y archivos multimedia.'}
+          </span>
+        </footer>
+
+        {/* Diálogo de confirmación interno (sin window.confirm) */}
+        {confirmState && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/70 p-4">
+            <div className="w-full max-w-md border-[3px] border-[#e1c875] bg-[#0b2b39] p-6 shadow-2xl">
+              <h4 className="font-pixel text-[10px] leading-relaxed text-[#f4d47d]">
+                CONFIRMAR ACCIÓN
+              </h4>
+              <p className="mt-3 text-base leading-relaxed text-[#f8f4df]">
+                {confirmState.message}
+              </p>
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmState(null)}
+                  className="border border-[#d8c47b]/60 bg-[#062230] px-3.5 py-2 text-xs text-[#fff5d7]"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const action = confirmState.onConfirm;
+                    setConfirmState(null);
+                    await action();
+                  }}
+                  className="border border-[#bd7967] bg-[#603d3d] px-3.5 py-2 text-xs font-semibold text-[#ffd5c7] hover:bg-[#7b4949]"
+                >
+                  {confirmState.confirmLabel}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};

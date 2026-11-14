@@ -1,0 +1,6 @@
+{
+  "name": "MUSEO 404 siNOMBRE — Archipiélago de ideas",
+  "description": "Museo digital interactivo explorable como archipiélago de islas pixel art y salas 2D, con editor de colecciones y copias de seguridad.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
