@@ -12,6 +12,7 @@ interface ArchipelagoMapProps {
   theme?: MuseumThemeConfig;
   controlsPaused: boolean;
   onSelectIsland: (islandId: string) => void;
+  onOpenOriginMuseum?: (url: string, sourceMuseumId?: string) => void;
 }
 
 type Direction = 'up' | 'down' | 'left' | 'right';
@@ -25,6 +26,7 @@ export const ArchipelagoMap: React.FC<ArchipelagoMapProps> = ({
   theme,
   controlsPaused,
   onSelectIsland,
+  onOpenOriginMuseum,
 }) => {
   const [zoom, setZoom] = useState(1);
   const [nearbyIslandId, setNearbyIslandId] = useState<string | null>(null);
@@ -216,7 +218,7 @@ export const ArchipelagoMap: React.FC<ArchipelagoMapProps> = ({
   });
 
   const handleMapClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement).closest('button')) return;
+    if ((e.target as HTMLElement).closest('button, a')) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const clickX = ((e.clientX - rect.left) / rect.width) * 100;
     const clickY = ((e.clientY - rect.top) / rect.height) * 100;
@@ -393,34 +395,62 @@ export const ArchipelagoMap: React.FC<ArchipelagoMapProps> = ({
           const isSelected = selectedIslandId === island.id;
           const rCount = roomCounts[island.id] || 0;
           const pCount = pieceCounts[island.id] || 0;
+          const loaned = island.loaned;
+          const originHref =
+            loaned?.sourceMuseumUrl ||
+            (loaned?.sourceMuseumId ? `?museum=${encodeURIComponent(loaned.sourceMuseumId)}` : '#');
+          const isExternalUrl = /^https?:\/\//i.test(originHref);
 
           return (
-            <button
+            <div
               key={island.id}
-              type="button"
-              onClick={() => onSelectIsland(island.id)}
-              aria-label={`Abrir isla ${island.title}`}
-              aria-pressed={isSelected}
               style={{ left: `${island.x}%`, top: `${island.y}%` }}
-              className={`group absolute z-10 min-w-[96px] -translate-x-1/2 -translate-y-1/2 cursor-pointer border-0 bg-transparent p-0 text-center text-white transition-transform duration-150 hover:scale-105 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white ${
-                isNearby || isSelected ? 'scale-105' : ''
+              className={`absolute z-10 flex min-w-[116px] -translate-x-1/2 -translate-y-1/2 flex-col items-center ${
+                loaned ? 'isla-prestada' : ''
               }`}
             >
-              <span
-                className={`font-pixel block whitespace-pre-line text-[10px] leading-[1.6] sm:text-xs ${
-                  isNearby
-                    ? 'text-[#ffe8a2] [text-shadow:0_0_8px_#fff,0_0_18px_#ffca53]'
-                    : island.id === 'patio'
-                      ? 'text-[#fff5cb] [text-shadow:0_2px_3px_#173f4b,0_0_8px_rgba(0,0,0,0.65)]'
-                      : 'text-white [text-shadow:0_2px_3px_#173f4b,0_0_8px_rgba(0,0,0,0.65)]'
+              <button
+                type="button"
+                onClick={() => onSelectIsland(island.id)}
+                aria-label={`Abrir isla ${island.title}`}
+                aria-pressed={isSelected}
+                className={`group relative z-[2] cursor-pointer border-0 bg-transparent p-0 text-center text-white transition-transform duration-150 hover:scale-105 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white ${
+                  isNearby || isSelected ? 'scale-105' : ''
                 }`}
               >
-                {island.mapLabel || island.title}
-              </span>
-              <span className="mt-1.5 inline-block border border-white/55 bg-[#022635]/80 px-2 py-0.5 text-[11px] text-[#e6f5ea] tabular-nums">
-                {pCount} piezas · {rCount} {rCount === 1 ? 'sala' : 'salas'}
-              </span>
-            </button>
+                <span
+                  className={`font-pixel block whitespace-pre-line text-[10px] leading-[1.6] sm:text-xs ${
+                    isNearby
+                      ? 'text-[#ffe8a2] [text-shadow:0_0_8px_#fff,0_0_18px_#ffca53]'
+                      : island.id === 'patio'
+                        ? 'text-[#fff5cb] [text-shadow:0_2px_3px_#173f4b,0_0_8px_rgba(0,0,0,0.65)]'
+                        : 'text-white [text-shadow:0_2px_3px_#173f4b,0_0_8px_rgba(0,0,0,0.65)]'
+                  }`}
+                >
+                  {island.mapLabel || island.title}
+                </span>
+                <span className="mt-1.5 inline-block border border-white/55 bg-[#022635]/80 px-2 py-0.5 text-[11px] text-[#e6f5ea] tabular-nums">
+                  {pCount} piezas · {rCount} {rCount === 1 ? 'sala' : 'salas'}
+                </span>
+              </button>
+
+              {loaned && (
+                <a
+                  href={originHref}
+                  target={isExternalUrl ? '_blank' : undefined}
+                  rel={isExternalUrl ? 'noopener noreferrer' : undefined}
+                  onClick={(e) => {
+                    if (onOpenOriginMuseum && !isExternalUrl && (loaned.sourceMuseumId || originHref.startsWith('?museum='))) {
+                      e.preventDefault();
+                      onOpenOriginMuseum(originHref, loaned.sourceMuseumId);
+                    }
+                  }}
+                  className="enlace-origen"
+                >
+                  → Ver en {loaned.sourceMuseumTitle}
+                </a>
+              )}
+            </div>
           );
         })}
 

@@ -1,0 +1,841 @@
+**Opiniones completas (honestas y útiles)**
+
+**Lo que está muy bien**
+
+- La visión es una de las más claras y humanas que he visto en proyectos de este tipo. “No queremos otro escaparate donde todos compitan” + “prestar espacios” + “ser la persona que te hubiera gustado tener al principio” es potente y diferenciador.
+- El tono del texto es cálido, imperfecto a propósito y coherente con el nombre 404 (algo que no está del todo, que se está buscando).
+- La mecánica de **Isla Prestada** es excelente. Es la materialización perfecta de la idea de “prestar una sala”. La niebla liminal + el enlace permanente al museo origen es una decisión de diseño muy buena: mantiene la autoría visible y crea una estética propia.
+
+**Lo que hay que resolver pronto**
+
+1. **Cómo se invita realmente**  
+   Ahora mismo el sistema de “préstamo” no tiene flujo de invitación. Hay que decidir:
+   - ¿El anfitrión genera un enlace mágico temporal?
+   - ¿Se usa un código corto?
+   - ¿Se hace por nombre de museo + contraseña de invitado?
+   
+   Sin esto, la feature se queda en estética.
+
+2. **Persistencia**  
+   Exportar/importar JSON está bien para empezar, pero en cuanto haya islas prestadas de verdad, vas a necesitar un backend mínimo (aunque sea Supabase o un JSON en GitHub).
+
+3. **El texto actual**  
+   Está muy cerca, pero tiene repeticiones y un final que se diluye. Necesita un cierre más fuerte y una estructura más limpia para web.
+
+4. **Gobernanza**  
+   Dices “la comunidad tendrá voz en las decisiones importantes”. Eso es hermoso, pero hay que bajarlo a algo concreto (aunque sea un Discord + votaciones simples). Si no, se queda en promesa.
+
+---
+
+### Textos estructurados y listos para usar
+
+#### 1. Texto principal (página de inicio / Acerca de)
+
+**MUSEO 404**  
+Tu museo. Tus reglas. Nuestra comunidad.
+
+No sé exactamente en qué se va a convertir esto.  
+Por ahora es un proyecto pequeño, gratuito y abierto. Una idea que tenía ganas de salir de mi computadora y encontrar personas que quisieran utilizarla, modificarla y hacerla crecer.
+
+MUSEO 404 es una red de museos independientes.  
+Cada persona puede construir su propio espacio y mostrar prácticamente cualquier cosa: pintura, fotografía, música, escritura, colecciones, proyectos, experimentos, ideas o cosas que todavía no tienen nombre.
+
+¿Te gusta la música? Construye salas con tus listas curadas. Comparte lo que escuchas. Invita a un DJ. Organiza una sesión.
+
+¿Eres artista? Expón tus obras. Invita a otros creadores. Presta una sala a alguien que apenas comienza. Usa tu alcance para que proyectos desconocidos lleguen más lejos.
+
+Sé esa persona que te hubiera gustado tener de apoyo al principio.
+
+¿Tienes un restaurante, una colección, una obsesión o algo que simplemente te encanta? También tiene lugar aquí.
+
+No necesitas ser famoso, profesional ni tener algo terminado.  
+Puedes hacer tu museo como quieras. Puedes modificarlo, experimentarlo y usarlo a tu manera.
+
+El proyecto es gratuito y queremos mantenerlo abierto. Estará en GitHub para que cualquiera pueda participar en su desarrollo.
+
+Y hay algo que nos importa especialmente: que la comunidad tenga voz en las decisiones importantes. No queremos que un solo administrador tenga el poder absoluto de decidir quién puede existir aquí y quién no.
+
+**¿Por qué hacerlo?**  
+Porque hay demasiadas cosas interesantes escondidas.  
+Una playlist construida durante diez años.  
+Una colección que nadie conoce.  
+Una persona que hace cosas increíbles y todavía no encuentra dónde mostrarlas.
+
+No queremos construir otro escaparate donde todos compitan por llamar la atención.  
+Queremos un lugar donde podamos prestarnos espacios, descubirnos y ayudarnos a existir.
+
+No es una solución mágica. Es una herramienta sencilla, visible y modificable.  
+Puede crecer, cambiar, equivocarse y convertirse en algo que todavía no imaginamos.
+
+Primero nosotros.
+
+Bienvenido a MUSEO 404.
+
+---
+
+#### 2. Guía de uso (versión limpia)
+
+**Cómo funciona MUSEO 404**
+
+1. **Explorar**  
+   Entra al directorio. Visita museos de otras personas. Cada uno tiene su propia identidad.
+
+2. **Crear tu museo**  
+   Configura nombre, colores, avatar y la forma en que quieres presentarte. No hay plantilla obligatoria.
+
+3. **Agregar creaciones**  
+   Sube obras, textos, audios, procesos o experimentos. No hace falta que esté terminado.
+
+4. **Organizar**  
+   Decide el orden, las islas y la experiencia. Tú decides cómo se recorre tu universo.
+
+5. **Conectar y prestar**  
+   MUSEO 404 es una red. Puedes descubrir otros museos y, más importante, **prestar islas** a otras personas para que muestren su trabajo dentro de tu espacio (y viceversa).
+
+6. **Administrar**  
+   Vuelve cuando quieras. Tu museo puede evolucionar contigo.
+
+**Consejo**  
+No esperes a tenerlo perfecto. Empieza con tres piezas. Visita otros museos. Presta una isla. Sé generoso.
+
+---
+
+#### 3. Guía rápida del Taller Interno (editor)
+
+**Cómo usar el Taller Interno**
+
+1. **Nombre y colores**  
+   Clic en ✎ EDITAR MUSEO → cambia el título y la paleta.
+
+2. **Crear una isla**  
+   Botón “+ Nueva isla” → dale un nombre.
+
+3. **Agregar una pieza**  
+   Entra a la isla → “+ Agregar pieza” → sube imagen, texto o audio.
+
+4. **Mover o borrar**  
+   Arrastra para mover. Clic + basura para borrar.
+
+5. **Guardar y migrar**  
+   Los cambios se guardan solos en este navegador.  
+   Usa **Exportar copia** / **Importar copia** para llevarte el museo completo a otro dispositivo.
+
+---
+
+### Implementación de “Isla Prestada” (lista para código)
+
+Aquí tienes la especificación lista para implementar, respetando exactamente lo que pediste:
+
+#### 1. Estructura de datos
+
+```ts
+interface IslaPrestada {
+  id: string;                    // id único de esta instancia prestada
+  idIslaOriginal: string;        // id de la isla en el museo origen
+  nombreMuseoOrigen: string;
+  enlaceMuseoOrigen: string;     // url completa del museo origen
+  nombreIsla: string;
+  contenido: Pieza[];            // las piezas que el invitado puede editar
+  fechaPrestamo?: string;
+  idInvitado?: string;           // opcional
+}
+```
+
+Añadir al estado del museo:
+
+```ts
+islasPrestadas: IslaPrestada[]
+```
+
+#### 2. CSS (niebla liminal pura)
+
+```css
+.isla-prestada {
+  position: relative;
+  isolation: isolate;
+}
+
+.isla-prestada::before {
+  content: '';
+  position: absolute;
+  inset: -24px;
+  background: radial-gradient(
+    circle at center,
+    rgba(255, 255, 255, 0.55) 0%,
+    rgba(200, 210, 220, 0.25) 40%,
+    transparent 72%
+  );
+  filter: blur(18px);
+  opacity: 0.75;
+  animation: pulsoNiebla 4.5s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 1;
+}
+
+@keyframes pulsoNiebla {
+  0%, 100% { opacity: 0.65; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(1.04); }
+}
+
+.enlace-origen {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.72rem;
+  opacity: 0.85;
+  z-index: 3;
+  white-space: nowrap;
+  background: rgba(0,0,0,0.35);
+  padding: 2px 8px;
+  border-radius: 4px;
+  backdrop-filter: blur(4px);
+}
+```
+
+#### 3. Renderizado en el mapa
+
+Cuando una isla esté en `islasPrestadas`, envolverla:
+
+```tsx
+<div className="isla-prestada relative">
+  {/* contenido normal de la isla */}
+  <a 
+    href={isla.enlaceMuseoOrigen} 
+    className="enlace-origen"
+    target="_blank"
+    rel="noopener"
+  >
+    → Ver en {isla.nombreMuseoOrigen}
+  </a>
+</div>
+```
+
+#### 4. Dentro de la sala prestada
+
+- Banner fijo superior:
+  ```
+  Sala prestada por [Nombre del Museo] → Visitar museo original
+  ```
+- La niebla se mantiene como borde difuso del contenedor de la sala.
+- El enlace debe ser siempre visible (no solo en hover).
+
+#### 5. Permisos (`esInvitado`)
+
+```ts
+const esInvitado = Boolean(session?.esInvitado && session?.idIslaPermitida === islaActual.id);
+```
+
+- Si `esInvitado === true`:
+  - Solo se muestra el editor de **esa** isla.
+  - Se ocultan o deshabilitan: crear nueva isla, editar otras islas, cambiar colores del museo, exportar completo, etc.
+- El resto del museo anfitrión se ve en modo solo lectura.
+
+#### 6. Persistencia
+
+Incluir `islasPrestadas` en el objeto que se serializa en **Exportar copia** e **Importar copia**. Así el museo viaja completo.
+
+---
+
+**Siguiente paso recomendado**
+
+¿Quieres que te prepare ahora mismo:
+
+A) El flujo completo de invitación (generar enlace mágico + página de aceptación), o  
+B) Los componentes React/TSX listos para pegar (IslaPrestada, BannerPrestada, hook de permisos), o  
+C) La versión final de los textos ya en formato markdown/HTML listo para la web?
+
+Dime cuál priorizamos y lo hacemos.
+
+
+
+----
+
+**Cómo pedir ayuda de creadores y programadores**
+
+Has llegado a un punto muy común y muy sano: construiste algo con alma y ahora necesitas gente que sepa más que tú en ciertas áreas. Eso no es fracaso, es el momento exacto en el que un proyecto deja de ser “solo mío” y se convierte en algo compartido.
+
+### Dónde publicar la convocatoria
+
+**Prioridad alta (hazlas en este orden):**
+
+1. **GitHub** (imprescindible)
+   - Crea el repositorio público.
+   - README claro + sección “Cómo colaborar”.
+   - Issues etiquetados: `help wanted`, `good first issue`, `design`, `frontend`, `backend`, `idea`.
+
+2. **X / Twitter** + **Instagram**
+   - El proyecto es muy visual. Funciona muy bien ahí.
+
+3. **Comunidades de programadores**
+   - Reddit: r/webdev, r/reactjs, r/opensource, r/SideProject, r/IndieHackers
+   - Discord: comunidades de React, Vite, “Indie Hackers”, “Build in Public”
+   - Hacker News → “Show HN” cuando el repo esté listo
+
+4. **Comunidades en español**
+   - Reddit en español / foros de programación
+   - Grupos de Facebook de desarrolladores front-end
+   - LinkedIn (post personal + hashtags #OpenSource #React #IndieWeb)
+
+5. **Espacios de arte + tecnología**
+   - Comunidades de net art, arte digital, experimental web
+   - Mastodon / Fediverse (muy receptivos a proyectos independientes)
+
+---
+
+### Mensaje recomendado (versión lista para usar)
+
+Aquí tienes un texto que puedes copiar y adaptar. Está escrito con el mismo tono del proyecto:
+
+---
+
+**¿Alguien quiere construir MUSEO 404 conmigo?**
+
+Llevo un tiempo creando un proyecto llamado **MUSEO 404**.
+
+Es una red de museos independientes. Cada persona puede construir su propio espacio y mostrar casi cualquier cosa: pintura, fotografía, música, escritura, colecciones, experimentos, ideas… o cosas que todavía no tienen nombre.
+
+La idea principal es simple pero importante:  
+**prestarnos espacios**.  
+Que alguien pueda prestar una sala de su museo a otra persona para que muestre su trabajo. Que no sea solo un escaparate individual, sino una red donde nos ayudemos a existir.
+
+Ya tengo un prototipo funcionando (pixel art, islas, editor, exploración…).  
+Llegué hasta donde mis conocimientos me permitieron. Ahora lo que falta se me hace más complejo: arquitectura multi-usuario, sistema de islas prestadas real, persistencia, permisos, y todo lo que convierta esto en una red de verdad.
+
+El proyecto es **gratuito, abierto y quiere vivir en GitHub**.  
+No busco que nadie trabaje gratis para mí. Busco personas a las que les guste la idea y quieran participar, proponer, romper cosas y construirlas mejor.
+
+Si eres desarrollador/a (React, TypeScript, backend, lo que sea), diseñador/a, o simplemente alguien a quien le resuene esto…  
+me encantaría que eches un vistazo y me digas qué te parece.
+
+Repo + prototipo: *(aquí pondrás los links)*
+
+Cualquier ayuda, idea o crítica es bienvenida.  
+Primero nosotros.
+
+—  
+
+---
+
+### Versión más corta (para X / Instagram)
+
+> Estoy construyendo MUSEO 404: una red de museos independientes donde cualquiera puede crear su espacio y prestar salas a otras personas.
+>
+> Ya tengo el prototipo funcionando, pero llegué a mi límite técnico. Busco desarrolladores y creadores que quieran involucrarse (es open source).
+>
+> Si te gusta la idea de prestarnos espacios en vez de solo competir por atención… háblame.
+
+---
+
+### Consejos importantes
+
+- Sé específico sobre lo que más necesitas (ej: “sistema de invitaciones para islas prestadas”, “auth ligera”, “mejora del editor”).
+- Crea 3-5 issues bien escritos en GitHub antes de publicar. La gente colabora más fácil cuando hay tareas claras.
+- No prometas dinero si no lo tienes. Sé transparente: “proyecto open source, sin presupuesto por ahora”.
+- Responde rápido a quien escriba. La gente se ilusiona y se enfría igual de rápido.
+
+¿Quieres que te ayude a:
+1. Redactar el README del repositorio,
+2. Crear los primeros issues bien planteados, o
+3. Adaptar el mensaje para una red concreta (X, Reddit, Discord…)?
+
+Dime y lo hacemos.
+
+—
+
+
+**Opiniones completas (honestas y útiles)**
+
+**Lo que está muy bien**
+
+- La visión es una de las más claras y humanas que he visto en proyectos de este tipo. “No queremos otro escaparate donde todos compitan” + “prestar espacios” + “ser la persona que te hubiera gustado tener al principio” es potente y diferenciador.
+- El tono del texto es cálido, imperfecto a propósito y coherente con el nombre 404 (algo que no está del todo, que se está buscando).
+- La mecánica de **Isla Prestada** es excelente. Es la materialización perfecta de la idea de “prestar una sala”. La niebla liminal + el enlace permanente al museo origen es una decisión de diseño muy buena: mantiene la autoría visible y crea una estética propia.
+
+**Lo que hay que resolver pronto**
+
+1. **Cómo se invita realmente**  
+   Ahora mismo el sistema de “préstamo” no tiene flujo de invitación. Hay que decidir:
+   - ¿El anfitrión genera un enlace mágico temporal?
+   - ¿Se usa un código corto?
+   - ¿Se hace por nombre de museo + contraseña de invitado?
+   
+   Sin esto, la feature se queda en estética.
+
+2. **Persistencia**  
+   Exportar/importar JSON está bien para empezar, pero en cuanto haya islas prestadas de verdad, vas a necesitar un backend mínimo (aunque sea Supabase o un JSON en GitHub).
+
+3. **El texto actual**  
+   Está muy cerca, pero tiene repeticiones y un final que se diluye. Necesita un cierre más fuerte y una estructura más limpia para web.
+
+4. **Gobernanza**  
+   Dices “la comunidad tendrá voz en las decisiones importantes”. Eso es hermoso, pero hay que bajarlo a algo concreto (aunque sea un Discord + votaciones simples). Si no, se queda en promesa.
+
+---
+
+### Textos estructurados y listos para usar
+
+#### 1. Texto principal (página de inicio / Acerca de)
+
+**MUSEO 404**  
+Tu museo. Tus reglas. Nuestra comunidad.
+
+No sé exactamente en qué se va a convertir esto.  
+Por ahora es un proyecto pequeño, gratuito y abierto. Una idea que tenía ganas de salir de mi computadora y encontrar personas que quisieran utilizarla, modificarla y hacerla crecer.
+
+MUSEO 404 es una red de museos independientes.  
+Cada persona puede construir su propio espacio y mostrar prácticamente cualquier cosa: pintura, fotografía, música, escritura, colecciones, proyectos, experimentos, ideas o cosas que todavía no tienen nombre.
+
+¿Te gusta la música? Construye salas con tus listas curadas. Comparte lo que escuchas. Invita a un DJ. Organiza una sesión.
+
+¿Eres artista? Expón tus obras. Invita a otros creadores. Presta una sala a alguien que apenas comienza. Usa tu alcance para que proyectos desconocidos lleguen más lejos.
+
+Sé esa persona que te hubiera gustado tener de apoyo al principio.
+
+¿Tienes un restaurante, una colección, una obsesión o algo que simplemente te encanta? También tiene lugar aquí.
+
+No necesitas ser famoso, profesional ni tener algo terminado.  
+Puedes hacer tu museo como quieras. Puedes modificarlo, experimentarlo y usarlo a tu manera.
+
+El proyecto es gratuito y queremos mantenerlo abierto. Estará en GitHub para que cualquiera pueda participar en su desarrollo.
+
+Y hay algo que nos importa especialmente: que la comunidad tenga voz en las decisiones importantes. No queremos que un solo administrador tenga el poder absoluto de decidir quién puede existir aquí y quién no.
+
+**¿Por qué hacerlo?**  
+Porque hay demasiadas cosas interesantes escondidas.  
+Una playlist construida durante diez años.  
+Una colección que nadie conoce.  
+Una persona que hace cosas increíbles y todavía no encuentra dónde mostrarlas.
+
+No queremos construir otro escaparate donde todos compitan por llamar la atención.  
+Queremos un lugar donde podamos prestarnos espacios, descubirnos y ayudarnos a existir.
+
+No es una solución mágica. Es una herramienta sencilla, visible y modificable.  
+Puede crecer, cambiar, equivocarse y convertirse en algo que todavía no imaginamos.
+
+Primero nosotros.
+
+Bienvenido a MUSEO 404.
+
+---
+
+#### 2. Guía de uso (versión limpia)
+
+**Cómo funciona MUSEO 404**
+
+1. **Explorar**  
+   Entra al directorio. Visita museos de otras personas. Cada uno tiene su propia identidad.
+
+2. **Crear tu museo**  
+   Configura nombre, colores, avatar y la forma en que quieres presentarte. No hay plantilla obligatoria.
+
+3. **Agregar creaciones**  
+   Sube obras, textos, audios, procesos o experimentos. No hace falta que esté terminado.
+
+4. **Organizar**  
+   Decide el orden, las islas y la experiencia. Tú decides cómo se recorre tu universo.
+
+5. **Conectar y prestar**  
+   MUSEO 404 es una red. Puedes descubrir otros museos y, más importante, **prestar islas** a otras personas para que muestren su trabajo dentro de tu espacio (y viceversa).
+
+6. **Administrar**  
+   Vuelve cuando quieras. Tu museo puede evolucionar contigo.
+
+**Consejo**  
+No esperes a tenerlo perfecto. Empieza con tres piezas. Visita otros museos. Presta una isla. Sé generoso.
+
+---
+
+#### 3. Guía rápida del Taller Interno (editor)
+
+**Cómo usar el Taller Interno**
+
+1. **Nombre y colores**  
+   Clic en ✎ EDITAR MUSEO → cambia el título y la paleta.
+
+2. **Crear una isla**  
+   Botón “+ Nueva isla” → dale un nombre.
+
+3. **Agregar una pieza**  
+   Entra a la isla → “+ Agregar pieza” → sube imagen, texto o audio.
+
+4. **Mover o borrar**  
+   Arrastra para mover. Clic + basura para borrar.
+
+5. **Guardar y migrar**  
+   Los cambios se guardan solos en este navegador.  
+   Usa **Exportar copia** / **Importar copia** para llevarte el museo completo a otro dispositivo.
+
+---
+
+### Implementación de “Isla Prestada” (lista para código)
+
+Aquí tienes la especificación lista para implementar, respetando exactamente lo que pediste:
+
+#### 1. Estructura de datos
+
+```ts
+interface IslaPrestada {
+  id: string;                    // id único de esta instancia prestada
+  idIslaOriginal: string;        // id de la isla en el museo origen
+  nombreMuseoOrigen: string;
+  enlaceMuseoOrigen: string;     // url completa del museo origen
+  nombreIsla: string;
+  contenido: Pieza[];            // las piezas que el invitado puede editar
+  fechaPrestamo?: string;
+  idInvitado?: string;           // opcional
+}
+```
+
+Añadir al estado del museo:
+
+```ts
+islasPrestadas: IslaPrestada[]
+```
+
+#### 2. CSS (niebla liminal pura)
+
+```css
+.isla-prestada {
+  position: relative;
+  isolation: isolate;
+}
+
+.isla-prestada::before {
+  content: '';
+  position: absolute;
+  inset: -24px;
+  background: radial-gradient(
+    circle at center,
+    rgba(255, 255, 255, 0.55) 0%,
+    rgba(200, 210, 220, 0.25) 40%,
+    transparent 72%
+  );
+  filter: blur(18px);
+  opacity: 0.75;
+  animation: pulsoNiebla 4.5s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 1;
+}
+
+@keyframes pulsoNiebla {
+  0%, 100% { opacity: 0.65; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(1.04); }
+}
+
+.enlace-origen {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.72rem;
+  opacity: 0.85;
+  z-index: 3;
+  white-space: nowrap;
+  background: rgba(0,0,0,0.35);
+  padding: 2px 8px;
+  border-radius: 4px;
+  backdrop-filter: blur(4px);
+}
+```
+
+#### 3. Renderizado en el mapa
+
+Cuando una isla esté en `islasPrestadas`, envolverla:
+
+```tsx
+<div className="isla-prestada relative">
+  {/* contenido normal de la isla */}
+  <a 
+    href={isla.enlaceMuseoOrigen} 
+    className="enlace-origen"
+    target="_blank"
+    rel="noopener"
+  >
+    → Ver en {isla.nombreMuseoOrigen}
+  </a>
+</div>
+```
+
+#### 4. Dentro de la sala prestada
+
+- Banner fijo superior:
+  ```
+  Sala prestada por [Nombre del Museo] → Visitar museo original
+  ```
+- La niebla se mantiene como borde difuso del contenedor de la sala.
+- El enlace debe ser siempre visible (no solo en hover).
+
+#### 5. Permisos (`esInvitado`)
+
+```ts
+const esInvitado = Boolean(session?.esInvitado && session?.idIslaPermitida === islaActual.id);
+```
+
+- Si `esInvitado === true`:
+  - Solo se muestra el editor de **esa** isla.
+  - Se ocultan o deshabilitan: crear nueva isla, editar otras islas, cambiar colores del museo, exportar completo, etc.
+- El resto del museo anfitrión se ve en modo solo lectura.
+
+#### 6. Persistencia
+
+Incluir `islasPrestadas` en el objeto que se serializa en **Exportar copia** e **Importar copia**. Así el museo viaja completo.
+
+---
+
+**Siguiente paso recomendado**
+
+¿Quieres que te prepare ahora mismo:
+
+A) El flujo completo de invitación (generar enlace mágico + página de aceptación), o  
+B) Los componentes React/TSX listos para pegar (IslaPrestada, BannerPrestada, hook de permisos), o  
+C) La versión final de los textos ya en formato markdown/HTML listo para la web?
+
+Dime cuál priorizamos y lo hacemos.**Opiniones completas (honestas y útiles)**
+
+**Lo que está muy bien**
+
+- La visión es una de las más claras y humanas que he visto en proyectos de este tipo. “No queremos otro escaparate donde todos compitan” + “prestar espacios” + “ser la persona que te hubiera gustado tener al principio” es potente y diferenciador.
+- El tono del texto es cálido, imperfecto a propósito y coherente con el nombre 404 (algo que no está del todo, que se está buscando).
+- La mecánica de **Isla Prestada** es excelente. Es la materialización perfecta de la idea de “prestar una sala”. La niebla liminal + el enlace permanente al museo origen es una decisión de diseño muy buena: mantiene la autoría visible y crea una estética propia.
+
+**Lo que hay que resolver pronto**
+
+1. **Cómo se invita realmente**  
+   Ahora mismo el sistema de “préstamo” no tiene flujo de invitación. Hay que decidir:
+   - ¿El anfitrión genera un enlace mágico temporal?
+   - ¿Se usa un código corto?
+   - ¿Se hace por nombre de museo + contraseña de invitado?
+   
+   Sin esto, la feature se queda en estética.
+
+2. **Persistencia**  
+   Exportar/importar JSON está bien para empezar, pero en cuanto haya islas prestadas de verdad, vas a necesitar un backend mínimo (aunque sea Supabase o un JSON en GitHub).
+
+3. **El texto actual**  
+   Está muy cerca, pero tiene repeticiones y un final que se diluye. Necesita un cierre más fuerte y una estructura más limpia para web.
+
+4. **Gobernanza**  
+   Dices “la comunidad tendrá voz en las decisiones importantes”. Eso es hermoso, pero hay que bajarlo a algo concreto (aunque sea un Discord + votaciones simples). Si no, se queda en promesa.
+
+---
+
+### Textos estructurados y listos para usar
+
+#### 1. Texto principal (página de inicio / Acerca de)
+
+**MUSEO 404**  
+Tu museo. Tus reglas. Nuestra comunidad.
+
+No sé exactamente en qué se va a convertir esto.  
+Por ahora es un proyecto pequeño, gratuito y abierto. Una idea que tenía ganas de salir de mi computadora y encontrar personas que quisieran utilizarla, modificarla y hacerla crecer.
+
+MUSEO 404 es una red de museos independientes.  
+Cada persona puede construir su propio espacio y mostrar prácticamente cualquier cosa: pintura, fotografía, música, escritura, colecciones, proyectos, experimentos, ideas o cosas que todavía no tienen nombre.
+
+¿Te gusta la música? Construye salas con tus listas curadas. Comparte lo que escuchas. Invita a un DJ. Organiza una sesión.
+
+¿Eres artista? Expón tus obras. Invita a otros creadores. Presta una sala a alguien que apenas comienza. Usa tu alcance para que proyectos desconocidos lleguen más lejos.
+
+Sé esa persona que te hubiera gustado tener de apoyo al principio.
+
+¿Tienes un restaurante, una colección, una obsesión o algo que simplemente te encanta? También tiene lugar aquí.
+
+No necesitas ser famoso, profesional ni tener algo terminado.  
+Puedes hacer tu museo como quieras. Puedes modificarlo, experimentarlo y usarlo a tu manera.
+
+El proyecto es gratuito y queremos mantenerlo abierto. Estará en GitHub para que cualquiera pueda participar en su desarrollo.
+
+Y hay algo que nos importa especialmente: que la comunidad tenga voz en las decisiones importantes. No queremos que un solo administrador tenga el poder absoluto de decidir quién puede existir aquí y quién no.
+
+**¿Por qué hacerlo?**  
+Porque hay demasiadas cosas interesantes escondidas.  
+Una playlist construida durante diez años.  
+Una colección que nadie conoce.  
+Una persona que hace cosas increíbles y todavía no encuentra dónde mostrarlas.
+
+No queremos construir otro escaparate donde todos compitan por llamar la atención.  
+Queremos un lugar donde podamos prestarnos espacios, descubirnos y ayudarnos a existir.
+
+No es una solución mágica. Es una herramienta sencilla, visible y modificable.  
+Puede crecer, cambiar, equivocarse y convertirse en algo que todavía no imaginamos.
+
+Primero nosotros.
+
+Bienvenido a MUSEO 404.
+
+---
+
+#### 2. Guía de uso (versión limpia)
+
+**Cómo funciona MUSEO 404**
+
+1. **Explorar**  
+   Entra al directorio. Visita museos de otras personas. Cada uno tiene su propia identidad.
+
+2. **Crear tu museo**  
+   Configura nombre, colores, avatar y la forma en que quieres presentarte. No hay plantilla obligatoria.
+
+3. **Agregar creaciones**  
+   Sube obras, textos, audios, procesos o experimentos. No hace falta que esté terminado.
+
+4. **Organizar**  
+   Decide el orden, las islas y la experiencia. Tú decides cómo se recorre tu universo.
+
+5. **Conectar y prestar**  
+   MUSEO 404 es una red. Puedes descubrir otros museos y, más importante, **prestar islas** a otras personas para que muestren su trabajo dentro de tu espacio (y viceversa).
+
+6. **Administrar**  
+   Vuelve cuando quieras. Tu museo puede evolucionar contigo.
+
+**Consejo**  
+No esperes a tenerlo perfecto. Empieza con tres piezas. Visita otros museos. Presta una isla. Sé generoso.
+
+---
+
+#### 3. Guía rápida del Taller Interno (editor)
+
+**Cómo usar el Taller Interno**
+
+1. **Nombre y colores**  
+   Clic en ✎ EDITAR MUSEO → cambia el título y la paleta.
+
+2. **Crear una isla**  
+   Botón “+ Nueva isla” → dale un nombre.
+
+3. **Agregar una pieza**  
+   Entra a la isla → “+ Agregar pieza” → sube imagen, texto o audio.
+
+4. **Mover o borrar**  
+   Arrastra para mover. Clic + basura para borrar.
+
+5. **Guardar y migrar**  
+   Los cambios se guardan solos en este navegador.  
+   Usa **Exportar copia** / **Importar copia** para llevarte el museo completo a otro dispositivo.
+
+---
+
+### Implementación de “Isla Prestada” (lista para código)
+
+Aquí tienes la especificación lista para implementar, respetando exactamente lo que pediste:
+
+#### 1. Estructura de datos
+
+```ts
+interface IslaPrestada {
+  id: string;                    // id único de esta instancia prestada
+  idIslaOriginal: string;        // id de la isla en el museo origen
+  nombreMuseoOrigen: string;
+  enlaceMuseoOrigen: string;     // url completa del museo origen
+  nombreIsla: string;
+  contenido: Pieza[];            // las piezas que el invitado puede editar
+  fechaPrestamo?: string;
+  idInvitado?: string;           // opcional
+}
+```
+
+Añadir al estado del museo:
+
+```ts
+islasPrestadas: IslaPrestada[]
+```
+
+#### 2. CSS (niebla liminal pura)
+
+```css
+.isla-prestada {
+  position: relative;
+  isolation: isolate;
+}
+
+.isla-prestada::before {
+  content: '';
+  position: absolute;
+  inset: -24px;
+  background: radial-gradient(
+    circle at center,
+    rgba(255, 255, 255, 0.55) 0%,
+    rgba(200, 210, 220, 0.25) 40%,
+    transparent 72%
+  );
+  filter: blur(18px);
+  opacity: 0.75;
+  animation: pulsoNiebla 4.5s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 1;
+}
+
+@keyframes pulsoNiebla {
+  0%, 100% { opacity: 0.65; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(1.04); }
+}
+
+.enlace-origen {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.72rem;
+  opacity: 0.85;
+  z-index: 3;
+  white-space: nowrap;
+  background: rgba(0,0,0,0.35);
+  padding: 2px 8px;
+  border-radius: 4px;
+  backdrop-filter: blur(4px);
+}
+```
+
+#### 3. Renderizado en el mapa
+
+Cuando una isla esté en `islasPrestadas`, envolverla:
+
+```tsx
+<div className="isla-prestada relative">
+  {/* contenido normal de la isla */}
+  <a 
+    href={isla.enlaceMuseoOrigen} 
+    className="enlace-origen"
+    target="_blank"
+    rel="noopener"
+  >
+    → Ver en {isla.nombreMuseoOrigen}
+  </a>
+</div>
+```
+
+#### 4. Dentro de la sala prestada
+
+- Banner fijo superior:
+  ```
+  Sala prestada por [Nombre del Museo] → Visitar museo original
+  ```
+- La niebla se mantiene como borde difuso del contenedor de la sala.
+- El enlace debe ser siempre visible (no solo en hover).
+
+#### 5. Permisos (`esInvitado`)
+
+```ts
+const esInvitado = Boolean(session?.esInvitado && session?.idIslaPermitida === islaActual.id);
+```
+
+- Si `esInvitado === true`:
+  - Solo se muestra el editor de **esa** isla.
+  - Se ocultan o deshabilitan: crear nueva isla, editar otras islas, cambiar colores del museo, exportar completo, etc.
+- El resto del museo anfitrión se ve en modo solo lectura.
+
+#### 6. Persistencia
+
+Incluir `islasPrestadas` en el objeto que se serializa en **Exportar copia** e **Importar copia**. Así el museo viaja completo.
+
+---
+
+**Siguiente paso recomendado**
+
+¿Quieres que te prepare ahora mismo:
+
+A) El flujo completo de invitación (generar enlace mágico + página de aceptación), o  
+B) Los componentes React/TSX listos para pegar (IslaPrestada, BannerPrestada, hook de permisos), o  
+C) La versión final de los textos ya en formato markdown/HTML listo para la web?
+
+Dime cuál priorizamos y lo hacemos.

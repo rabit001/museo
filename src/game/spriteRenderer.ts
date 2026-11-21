@@ -744,9 +744,11 @@ export class SpriteRenderer {
     });
 
     lCtx.globalCompositeOperation = 'source-over';
-    ctx.save();
-    ctx.drawImage(this.lightCanvas, 0, 0);
-    ctx.restore();
+    if (this.lightCanvas.width > 0 && this.lightCanvas.height > 0) {
+      ctx.save();
+      ctx.drawImage(this.lightCanvas, 0, 0);
+      ctx.restore();
+    }
   }
 
   renderPlayer(

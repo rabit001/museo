@@ -214,6 +214,20 @@ export const DIRTY_DOZEN_CASES: DirtyDozenCase[] = [
     },
     expected: 'PERMISSION_DENIED',
   },
+  {
+    id: 17,
+    name: 'Loaned Island Cross-Island Escalation / Invite Hijack',
+    collectionPath: '/museums/museum_alice_pub/pieces/piece_guest_escape',
+    operation: 'create',
+    authUid: 'bob',
+    emailVerified: true,
+    payload: {
+      museumId: 'museum_alice_pub',
+      islandId: 'other_island_not_loaned',
+      loanInviteId: 'inv_bob_patio',
+    },
+    expected: 'PERMISSION_DENIED',
+  },
 ];
 
 function validMuseumDoc(ownerId: string, overrides: Record<string, unknown> = {}) {
@@ -574,8 +588,101 @@ if (emulatorHost) {
       })
     );
   });
+
+  test('Isla Prestada invites & scoped guest permissions (only allowed island)', async () => {
+    const aliceDb = testEnv.authenticatedContext('alice', { email_verified: true }).firestore();
+    const bobDb = testEnv.authenticatedContext('bob', { email_verified: true }).firestore();
+
+    // Non-owner Bob cannot create an invite for Alice's museum
+    await assertFails(
+      setDoc(doc(bobDb, 'islandInvites', 'inv_spoof'), {
+        museumId: 'museum_alice_pub',
+        museumTitle: 'Galería Alice',
+        hostUid: 'bob',
+        hostName: 'Bob',
+        islandId: 'patio',
+        islandTitle: 'Patio',
+        status: 'pending',
+        guestUid: null,
+        guestName: '',
+        sourceMuseumId: '',
+        sourceMuseumTitle: '',
+        sourceMuseumUrl: '',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+
+    // Owner Alice creates a valid pending invite
+    await assertSucceeds(
+      setDoc(doc(aliceDb, 'islandInvites', 'inv_patio_1'), {
+        museumId: 'museum_alice_pub',
+        museumTitle: 'Galería Alice',
+        hostUid: 'alice',
+        hostName: 'Alice Studio',
+        islandId: 'patio',
+        islandTitle: 'Patio',
+        status: 'pending',
+        guestUid: null,
+        guestName: '',
+        sourceMuseumId: '',
+        sourceMuseumTitle: '',
+        sourceMuseumUrl: '',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+
+    // Bob accepts the invite with his origin museum link
+    await assertSucceeds(
+      updateDoc(doc(bobDb, 'islandInvites', 'inv_patio_1'), {
+        status: 'accepted',
+        guestUid: 'bob',
+        guestName: 'Bob Kitchen',
+        sourceMuseumId: 'museum_bob_1',
+        sourceMuseumTitle: 'Bistró Bob',
+        sourceMuseumUrl: '?museum=museum_bob_1',
+        updatedAt: serverTimestamp(),
+      })
+    );
+
+    // Bob can add a piece inside the loaned island ('patio') with loanInviteId
+    await assertSucceeds(
+      setDoc(
+        doc(bobDb, 'museums', 'museum_alice_pub', 'pieces', 'p_guest_1'),
+        validPieceDoc('museum_alice_pub', 'bob', {
+          islandId: 'patio',
+          loanInviteId: 'inv_patio_1',
+          isPublic: true,
+        })
+      )
+    );
+
+    // Bob CANNOT add a piece to a different island in Alice's museum
+    await assertFails(
+      setDoc(
+        doc(bobDb, 'museums', 'museum_alice_pub', 'pieces', 'p_guest_escape'),
+        validPieceDoc('museum_alice_pub', 'bob', {
+          islandId: 'other_island',
+          loanInviteId: 'inv_patio_1',
+          isPublic: true,
+        })
+      )
+    );
+
+    // Bob can update and delete his own piece on the loaned island
+    await assertSucceeds(
+      updateDoc(doc(bobDb, 'museums', 'museum_alice_pub', 'pieces', 'p_guest_1'), {
+        title: 'Obra invitada editada',
+        updatedAt: serverTimestamp(),
+      })
+    );
+    await assertSucceeds(
+      deleteDoc(doc(bobDb, 'museums', 'museum_alice_pub', 'pieces', 'p_guest_1'))
+    );
+  });
 } else {
   test('Dirty Dozen & query contract registry present (set FIRESTORE_EMULATOR_HOST to execute live)', () => {
-    assert.equal(DIRTY_DOZEN_CASES.length, 16);
+    assert.equal(DIRTY_DOZEN_CASES.length, 17);
   });
 }

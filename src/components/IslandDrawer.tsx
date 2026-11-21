@@ -13,6 +13,7 @@ interface IslandDrawerProps {
   onOpenPiece: (piece: MuseumPiece) => void;
   onEnter2DMode: (islandId: string, roomId: string) => void;
   onOpenGuestbook?: (island: Island, room: Room | null) => void;
+  onOpenOriginMuseum?: (url: string, sourceMuseumId?: string) => void;
   onClose: () => void;
 }
 
@@ -64,6 +65,7 @@ export const IslandDrawer: React.FC<IslandDrawerProps> = ({
   onOpenPiece,
   onEnter2DMode,
   onOpenGuestbook,
+  onOpenOriginMuseum,
   onClose,
 }) => {
   if (!island) return null;
@@ -100,6 +102,41 @@ export const IslandDrawer: React.FC<IslandDrawerProps> = ({
         <p className="mt-1.5 text-[15px] leading-snug text-[#d0e6da]">
           {activeRoom ? activeRoom.description || island.description : island.description}
         </p>
+
+        {island.loaned && (() => {
+          const originHref =
+            island.loaned.sourceMuseumUrl ||
+            (island.loaned.sourceMuseumId
+              ? `?museum=${encodeURIComponent(island.loaned.sourceMuseumId)}`
+              : '#');
+          const isExternal = /^https?:\/\//i.test(originHref);
+          return (
+            <div className="mt-3 border border-white/45 bg-white/10 px-3 py-2 text-xs text-[#edf5f7]">
+              <p className="font-semibold text-[#fff9e6]">
+                Isla Prestada · por {island.loaned.sourceMuseumTitle}
+              </p>
+              <a
+                href={originHref}
+                target={isExternal ? '_blank' : undefined}
+                rel={isExternal ? 'noopener noreferrer' : undefined}
+                onClick={(e) => {
+                  if (
+                    onOpenOriginMuseum &&
+                    !isExternal &&
+                    (island.loaned?.sourceMuseumId || originHref.startsWith('?museum='))
+                  ) {
+                    e.preventDefault();
+                    onOpenOriginMuseum(originHref, island.loaned?.sourceMuseumId);
+                  }
+                }}
+                className="mt-1 inline-block font-semibold underline decoration-[#f4d47d] underline-offset-2 hover:text-[#f4d47d]"
+                style={{ color: accentColor }}
+              >
+                → Ver en {island.loaned.sourceMuseumTitle}
+              </a>
+            </div>
+          );
+        })()}
 
         <button
           type="button"

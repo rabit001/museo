@@ -26,6 +26,7 @@ interface RoomExplorer2DProps {
   onOpenPiece: (piece: MuseumPiece) => void;
   onOpenSign: (title: string, content: string) => void;
   onOpenGuestbook?: (island: Island, room: Room) => void;
+  onOpenOriginMuseum?: (url: string, sourceMuseumId?: string) => void;
   onExitToArchipelago: () => void;
 }
 
@@ -57,6 +58,7 @@ export const RoomExplorer2D: React.FC<RoomExplorer2DProps> = ({
   onOpenPiece,
   onOpenSign,
   onOpenGuestbook,
+  onOpenOriginMuseum,
   onExitToArchipelago,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -846,9 +848,50 @@ export const RoomExplorer2D: React.FC<RoomExplorer2DProps> = ({
         </div>
       </header>
 
+      {/* Banner fijo superior si es una Isla Prestada */}
+      {island.loaned && (() => {
+        const originHref =
+          island.loaned.sourceMuseumUrl ||
+          (island.loaned.sourceMuseumId
+            ? `?museum=${encodeURIComponent(island.loaned.sourceMuseumId)}`
+            : '#');
+        const isExternal = /^https?:\/\//i.test(originHref);
+        return (
+          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b border-white/25 bg-[#0b3140]/95 px-4 py-1.5 text-xs text-[#edf5f7]">
+            <span>
+              Sala prestada por{' '}
+              <strong className="text-[#fff9e6]">{island.loaned.sourceMuseumTitle}</strong>
+              {island.loaned.sourceAuthorName ? ` (${island.loaned.sourceAuthorName})` : ''}
+            </span>
+            <a
+              href={originHref}
+              target={isExternal ? '_blank' : undefined}
+              rel={isExternal ? 'noopener noreferrer' : undefined}
+              onClick={(e) => {
+                if (
+                  onOpenOriginMuseum &&
+                  !isExternal &&
+                  (island.loaned?.sourceMuseumId || originHref.startsWith('?museum='))
+                ) {
+                  e.preventDefault();
+                  onOpenOriginMuseum(originHref, island.loaned?.sourceMuseumId);
+                }
+              }}
+              className="border border-white/55 bg-white/10 px-2.5 py-0.5 font-semibold text-[#f4d47d] transition-colors hover:border-[#f4d47d] hover:bg-white/20"
+            >
+              → Visitar museo original
+            </a>
+          </div>
+        );
+      })()}
+
       {/* Lienzo central 2D */}
       <div className="relative flex flex-1 items-center justify-center overflow-hidden p-3 sm:p-6">
-        <div className="relative aspect-[256/224] h-full max-h-[calc(100vh-140px)] w-auto max-w-full border-4 border-[#e1c875] bg-black shadow-[0_24px_65px_rgba(0,0,0,0.75)]">
+        <div
+          className={`relative aspect-[256/224] h-full max-h-[calc(100vh-140px)] w-auto max-w-full border-4 border-[#e1c875] bg-black shadow-[0_24px_65px_rgba(0,0,0,0.75)] ${
+            island.loaned ? 'isla-prestada-sala' : ''
+          }`}
+        >
           <canvas
             ref={canvasRef}
             width={CANVAS_W}

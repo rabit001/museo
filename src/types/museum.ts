@@ -100,6 +100,47 @@ export interface CuratedFromMeta {
   sourcePieceTitle: string;
 }
 
+export interface LoanedIslandMeta {
+  /** ID único de esta instancia o invitación de préstamo */
+  loanId: string;
+  /** ID del museo de origen (CloudMuseum ID o 'museo404') */
+  sourceMuseumId: string;
+  /** Nombre legible del museo de origen */
+  sourceMuseumTitle: string;
+  /** Nombre del creador del museo de origen */
+  sourceAuthorName?: string;
+  /** URL completa o ?museum=ID para visitar el museo original */
+  sourceMuseumUrl: string;
+  /** ID de la isla original en el museo de origen */
+  sourceIslandId?: string;
+  /** UID del creador invitado autorizado (si proviene de invitación en la nube) */
+  guestUid?: string | null;
+  /** Nombre visible del invitado */
+  guestName?: string;
+  /** Fecha ISO del préstamo */
+  loanedAt: string;
+}
+
+export type IslandInviteStatus = 'pending' | 'accepted' | 'revoked';
+
+export interface IslandInvite {
+  id: string;
+  museumId: string;
+  museumTitle: string;
+  hostUid: string;
+  hostName: string;
+  islandId: string;
+  islandTitle: string;
+  status: IslandInviteStatus;
+  guestUid: string | null;
+  guestName: string;
+  sourceMuseumId: string;
+  sourceMuseumTitle: string;
+  sourceMuseumUrl: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Island {
   id: string;
   isOriginal: boolean;
@@ -113,6 +154,8 @@ export interface Island {
   eyebrow: string;
   description: string;
   footer: string;
+  /** Metadatos si esta isla es una "Isla Prestada" */
+  loaned?: LoanedIslandMeta;
 }
 
 export interface Room {
@@ -155,6 +198,8 @@ export interface MuseumPiece {
   painting?: PaintingData;
   app?: InteractiveAppData;
   curatedFrom?: CuratedFromMeta;
+  /** ID de la invitación aceptada cuando la pieza fue creada por un invitado */
+  loanInviteId?: string;
 
   // Campos comerciales opcionales
   saleStatus?: SaleStatus;
@@ -193,6 +238,8 @@ export interface MuseumState {
   hidden: string[];
   /** IDs de piezas descubiertas en la exploración */
   discoveredIds: string[];
+  /** Snapshot serializado de islas prestadas para copias locales */
+  islasPrestadas?: LoanedIslandMeta[];
 }
 
 export interface CloudMuseum {

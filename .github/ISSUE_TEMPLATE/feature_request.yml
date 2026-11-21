@@ -1,0 +1,32 @@
+name: Propuesta o mejora
+description: Sugiere una mejora de experiencia, nueva función, bioma o ajuste de diseño.
+title: "[Mejora]: "
+labels: ["enhancement", "help wanted"]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: ¿Qué problema o necesidad resuelve?
+      description: Cuéntanos cómo ayudaría a visitantes, creadores o curadores.
+    validations:
+      required: true
+  - type: textarea
+    id: experience
+    attributes:
+      label: ¿Cómo se sentiría dentro del recorrido del museo?
+      description: Manteniendo la estética archivística + pixel art y la simplicidad del archipiélago.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Área principal
+      options:
+        - Isla Prestada y Red de Museos
+        - Taller Interno (Editor)
+        - Exploración 3D / Mapa 2D / Salas 2D
+        - Accesibilidad y Móvil
+        - Rendimiento y Multimedia
+        - Documentación / Comunidad
+    validations:
+      required: true

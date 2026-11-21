@@ -75,6 +75,22 @@
         { "fieldPath": "museumId", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "islandInvites",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "museumId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "islandInvites",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "hostUid", "order": "ASCENDING" },
+        { "fieldPath": "museumId", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

@@ -15,6 +15,11 @@
     overflow: hidden;
     font-family: 'Pixelify Sans', system-ui, -apple-system, sans-serif;
   }
+
+  :where(button, a, input, select, textarea):focus-visible {
+    outline: 2px solid #f4d47d;
+    outline-offset: 2px;
+  }
 }
 
 .font-pixel {
@@ -48,6 +53,67 @@
 .museum-scroll::-webkit-scrollbar-thumb {
   background: #4f8a88;
   border: 1px solid #0d2b38;
+}
+
+/* Isla Prestada: niebla liminal y enlace permanente al museo de origen */
+.isla-prestada {
+  position: relative;
+  isolation: isolate;
+}
+
+.isla-prestada::before {
+  content: '';
+  position: absolute;
+  inset: -24px;
+  background: radial-gradient(
+    circle at center,
+    rgba(255, 255, 255, 0.55) 0%,
+    rgba(200, 210, 220, 0.25) 40%,
+    transparent 72%
+  );
+  filter: blur(18px);
+  opacity: 0.75;
+  animation: pulsoNiebla 4.5s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.isla-prestada-sala {
+  box-shadow:
+    0 0 0 2px rgba(242, 247, 252, 0.55),
+    0 0 36px 8px rgba(220, 234, 244, 0.35),
+    inset 0 0 28px 6px rgba(235, 244, 250, 0.22);
+}
+
+@keyframes pulsoNiebla {
+  0%, 100% {
+    opacity: 0.65;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.04);
+  }
+}
+
+.enlace-origen {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 0.72rem;
+  opacity: 0.92;
+  z-index: 3;
+  white-space: nowrap;
+  background: rgba(6, 26, 36, 0.84);
+  color: #f4efe0;
+  border: 1px solid rgba(226, 236, 242, 0.45);
+  padding: 2px 8px;
+  backdrop-filter: blur(4px);
+}
+
+.enlace-origen:hover {
+  background: rgba(18, 63, 78, 0.95);
+  color: #fff9e6;
+  border-color: #f4d47d;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -62,38 +62,40 @@ Buscamos aportes de **programadores, diseñadores, artistas, escritores, curador
 ## Cómo empezar
 
 ### Reportar un problema
-Abre un **Issue** y describe:
+Abre un **Issue** usando la plantilla `[Bug]` en `.github/ISSUE_TEMPLATE/` y describe:
 - Qué esperabas que pasara
 - Qué pasó realmente
 - Pasos para reproducirlo
 - Si es posible, captura o vídeo corto
 
-### Proponer una mejora
-Abre un Issue con la etiqueta `propuesta` o `diseño` y explica:
+### Proponer una mejora o Isla Prestada
+Abre un **Issue** usando la plantilla `[Mejora]` o `[Isla Prestada]` y explica:
 - El problema o necesidad que resuelve
 - Cómo se sentiría dentro del recorrido del museo
 - Si afecta a visitantes, creadores o ambos
 
 ### Enviar código (Pull Request)
 
-1. Haz fork del repositorio
-2. Crea una rama descriptiva:
+1. Lee [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md) y [`README.md`](./README.md)
+2. Haz fork del repositorio y crea una rama descriptiva:
    ```bash
    git checkout -b fix/libro-visitas-spam
    git checkout -b feat/nuevo-bioma-volcan
    git checkout -b docs/mejorar-readme
    ```
 3. Haz commits claros y en presente:
-   ```
+   ```text
    Añade validación de longitud al apodo del libro de visitas
    Corrige posición de islas en vista mapa
    ```
-4. Asegúrate de que el proyecto compile:
+4. Asegúrate de que el proyecto compile y pase verificaciones:
    ```bash
    npm install
    npm run lint
    npm run build
+   npx eslint firestore.rules
    ```
+   Si modificas `firestore.rules`, corre también los tests de emulador (`firestore.rules.test.ts`).
 5. Abre el Pull Request hacia `main` y describe:
    - Qué cambia
    - Por qué
@@ -103,22 +105,23 @@ Abre un Issue con la etiqueta `propuesta` o `diseño` y explica:
 
 ## Estructura útil del proyecto
 
-```
+```text
 src/
-├── components/          # UI (Archipelago3D, RoomExplorer2D, MuseumEditor, etc.)
-├── data/                # Temas, personajes, contenido base
-├── firebase/            # Cliente y funciones de red de museos
+├── components/          # UI (Archipelago3D, RoomExplorer2D, MuseumEditor, LoanInviteModal...)
+├── data/                # Temas, plantillas, personajes y contenido base
+├── firebase/            # Red de museos, guestbook, solicitudes e islas prestadas
 ├── game/                # Audio, sprites, construcción de salas
-├── storage/             # Estado local y medios
+├── storage/             # Estado local, copias JSON y mediaDb (IndexedDB)
 ├── three/               # Lógica Three.js
 └── types/               # Tipos TypeScript (museum.ts es el corazón)
 ```
 
 Archivos especialmente importantes:
-- `src/types/museum.ts` → modelo de datos
-- `firestore.rules` → seguridad
-- `src/components/MuseumEditor.tsx` → experiencia de creación
-- `src/data/themes.ts` → presets de color
+- `src/types/museum.ts` → modelo de datos (museos, piezas, invitaciones de isla prestada)
+- `firestore.rules` y `firestore.rules.test.ts` → seguridad e invariantes de red
+- `src/components/MuseumEditor.tsx` → Taller Interno y modo invitado
+- `src/components/LoanInviteModal.tsx` → flujo de aceptación de Isla Prestada
+- `src/data/themes.ts` y `src/data/museumTemplates.ts` → presets de color y plantillas
 
 ---
 
@@ -127,11 +130,11 @@ Archivos especialmente importantes:
 ### Código
 - TypeScript estricto
 - Componentes funcionales + hooks
-- Nombres en español cuando describen dominio del museo (`Island`, `Room`, `GuestbookEntry`…), inglés cuando son técnicos genéricos
+- Nombres en español cuando describen dominio del museo (`Island`, `Room`, `GuestbookEntry`, `islasPrestadas`…), inglés cuando son técnicos genéricos
 - Evitar dependencias nuevas sin justificación clara
 
 ### Diseño
-- Mantener la paleta base y la tipografía (Pixelify Sans / Press Start 2P + sistema)
+- Mantener la paleta base y la tipografía (`Pixelify Sans` / `Press Start 2P` + sistema)
 - Preferir separadores finos y placas rectangulares antes que píldoras redondeadas
 - Los precios y estados comerciales deben sentirse museográficos, no de e-commerce
 
@@ -143,10 +146,10 @@ Archivos especialmente importantes:
 
 ## ¿No sabes por dónde empezar?
 
-Puedes:
-- Revisar los Issues etiquetados como `good first issue` o `ayuda querida`
-- Mejorar textos de la interfaz
-- Proponer un nuevo preset de tema
+Revisa [`docs/ISSUES_INICIALES.md`](./docs/ISSUES_INICIALES.md), donde listamos los **8 primeros issues** listos para tomar, o directamente puedes:
+- Revisar los Issues etiquetados como `good first issue`, `help wanted` o `isla-prestada`
+- Mejorar textos de la interfaz y guías de onboarding
+- Proponer un nuevo preset de tema o plantilla comunitaria
 - Crear un museo público de ejemplo y contarnos qué se sintió raro al construirlo
 - Simplemente recorrer el museo insignia y reportar fricciones
 
@@ -154,13 +157,14 @@ Todo eso cuenta.
 
 ---
 
-## Contacto y tono
+## Canal de comunidad y tono
 
 Este es un proyecto hecho con cuidado y obsesión estética.
-Tratamos las contribuciones con respeto y pedimos lo mismo a cambio.
+Tratamos las contribuciones con respeto y pedimos lo mismo a cambio (consulta [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md)).
 
-Si tienes dudas antes de abrir un PR, puedes abrir un Issue de pregunta.
-Es mejor preguntar que asumir.
+- **Dudas antes de programar**: abre un Issue de pregunta o un hilo en **GitHub Discussions**.
+- **Propuestas de gobernanza y red**: cualquier cambio que afecte reglas de visibilidad, convivencia o el museo insignia (`museo404`) se conversa en abierto antes de cerrarse.
+- **Chat en tiempo real**: cuando se habilite el servidor comunitario (Discord / Matrix), el enlace oficial se publicará en la portada de `README.md`.
 
 ---
 

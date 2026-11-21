@@ -17,12 +17,17 @@ import {
 import { DEFAULT_MUSEUM_THEME } from '../data/themes';
 import { makeId } from '../storage/museumStore';
 import {
+  CloudMuseum,
   DonationConfig,
   FlagshipConfig,
   FrameStyle,
   GuestbookEntry,
   InquiryStatus,
+  Island,
+  IslandInvite,
+  IslandInviteStatus,
   IslandShapeStyle,
+  LoanedIslandMeta,
   MuseumThemeConfig,
   PieceCommerceOverride,
   PurchaseInquiry,
@@ -482,5 +487,286 @@ export async function saveFlagshipCloudConfig(config: FlagshipConfig): Promise<F
     };
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+// ============================================================
+// ISLAS PRESTADAS — INVITACIONES MÁGICAS (/islandInvites)
+// ============================================================
+
+function mapIslandInviteDoc(id: string, data: Record<string, unknown>): IslandInvite {
+  const rawStatus = String(data.status || 'pending');
+  const status: IslandInviteStatus =
+    rawStatus === 'accepted' || rawStatus === 'revoked' ? rawStatus : 'pending';
+  return {
+    id,
+    museumId: String(data.museumId || ''),
+    museumTitle: String(data.museumTitle || 'Museo'),
+    hostUid: String(data.hostUid || ''),
+    hostName: String(data.hostName || 'Creador'),
+    islandId: String(data.islandId || ''),
+    islandTitle: String(data.islandTitle || 'Isla'),
+    status,
+    guestUid: typeof data.guestUid === 'string' && data.guestUid ? data.guestUid : null,
+    guestName: String(data.guestName || ''),
+    sourceMuseumId: String(data.sourceMuseumId || ''),
+    sourceMuseumTitle: String(data.sourceMuseumTitle || ''),
+    sourceMuseumUrl: String(data.sourceMuseumUrl || ''),
+    createdAt: formatFirestoreDate(data.createdAt),
+    updatedAt: formatFirestoreDate(data.updatedAt),
+  };
+}
+
+export function inviteToLoanedMeta(invite: IslandInvite): LoanedIslandMeta {
+  return {
+    loanId: invite.id,
+    sourceMuseumId: invite.sourceMuseumId || '',
+    sourceMuseumTitle: invite.sourceMuseumTitle || invite.guestName || 'Museo invitado',
+    sourceAuthorName: invite.guestName || 'Creador invitado',
+    sourceMuseumUrl:
+      invite.sourceMuseumUrl ||
+      (invite.sourceMuseumId ? `?museum=${encodeURIComponent(invite.sourceMuseumId)}` : ''),
+    sourceIslandId: invite.islandId,
+    guestUid: invite.guestUid,
+    guestName: invite.guestName,
+    loanedAt: invite.updatedAt || invite.createdAt,
+  };
+}
+
+export function isValidSourceMuseumUrl(url: string): boolean {
+  const trimmed = url.trim();
+  if (!trimmed) return true;
+  return /^(\?museum=[a-zA-Z0-9_-]+|https?:\/\/.+)$/i.test(trimmed);
+}
+
+export async function createIslandInvite(params: {
+  museum: CloudMuseum;
+  island: Island;
+  hostUser: User;
+}): Promise<IslandInvite> {
+  const { museum, island, hostUser } = params;
+  const inviteId = makeId('inv');
+  const path = `islandInvites/${inviteId}`;
+  const museumId = cleanId(museum.id, 'museum');
+  const museumTitle = clampStr(museum.title.trim() || 'Mi Museo', 100);
+  const hostName = clampStr(museum.authorName.trim() || hostUser.displayName || 'Creador', 80);
+  const islandId = clampStr(island.id, 80);
+  const islandTitle = clampStr(island.title.trim() || island.mapLabel || 'Isla prestada', 80);
+
+  try {
+    await setDoc(doc(db, 'islandInvites', inviteId), {
+      museumId,
+      museumTitle,
+      hostUid: hostUser.uid,
+      hostName,
+      islandId,
+      islandTitle,
+      status: 'pending',
+      guestUid: null,
+      guestName: '',
+      sourceMuseumId: '',
+      sourceMuseumTitle: '',
+      sourceMuseumUrl: '',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    const nowIso = new Date().toISOString();
+    return {
+      id: inviteId,
+      museumId,
+      museumTitle,
+      hostUid: hostUser.uid,
+      hostName,
+      islandId,
+      islandTitle,
+      status: 'pending',
+      guestUid: null,
+      guestName: '',
+      sourceMuseumId: '',
+      sourceMuseumTitle: '',
+      sourceMuseumUrl: '',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export async function fetchIslandInvite(inviteId: string): Promise<IslandInvite | null> {
+  const cleaned = inviteId.trim().replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!cleaned) return null;
+  const path = `islandInvites/${cleaned}`;
+  try {
+    const snap = await getDoc(doc(db, 'islandInvites', cleaned));
+    if (!snap.exists()) return null;
+    return mapIslandInviteDoc(snap.id, snap.data());
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, path);
+  }
+}
+
+export async function fetchAcceptedLoansForMuseum(museumId: string): Promise<IslandInvite[]> {
+  const path = 'islandInvites';
+  try {
+    const q = query(
+      collection(db, 'islandInvites'),
+      where('museumId', '==', museumId),
+      where('status', '==', 'accepted'),
+      limit(30)
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => mapIslandInviteDoc(d.id, d.data()));
+  } catch (error) {
+    if (isMissingIndexError(error)) {
+      try {
+        const fallbackQ = query(
+          collection(db, 'islandInvites'),
+          where('status', '==', 'accepted'),
+          limit(80)
+        );
+        const snap = await getDocs(fallbackQ);
+        return snap.docs
+          .map((d) => mapIslandInviteDoc(d.id, d.data()))
+          .filter((i) => i.museumId === museumId);
+      } catch (err2) {
+        handleFirestoreError(err2, OperationType.LIST, path);
+      }
+    }
+    handleFirestoreError(error, OperationType.LIST, path);
+  }
+}
+
+export async function fetchHostInvitesForMuseum(
+  museumId: string,
+  hostUid: string
+): Promise<IslandInvite[]> {
+  const path = 'islandInvites';
+  try {
+    const q = query(
+      collection(db, 'islandInvites'),
+      where('hostUid', '==', hostUid),
+      where('museumId', '==', museumId),
+      limit(40)
+    );
+    const snap = await getDocs(q);
+    return snap.docs
+      .map((d) => mapIslandInviteDoc(d.id, d.data()))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  } catch (error) {
+    if (isMissingIndexError(error)) {
+      try {
+        const fallbackQ = query(
+          collection(db, 'islandInvites'),
+          where('hostUid', '==', hostUid),
+          limit(60)
+        );
+        const snap = await getDocs(fallbackQ);
+        return snap.docs
+          .map((d) => mapIslandInviteDoc(d.id, d.data()))
+          .filter((i) => i.museumId === museumId)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      } catch (err2) {
+        handleFirestoreError(err2, OperationType.LIST, path);
+      }
+    }
+    handleFirestoreError(error, OperationType.LIST, path);
+  }
+}
+
+export async function fetchMyGuestLoans(guestUid: string): Promise<IslandInvite[]> {
+  const path = 'islandInvites';
+  try {
+    const q = query(
+      collection(db, 'islandInvites'),
+      where('guestUid', '==', guestUid),
+      where('status', '==', 'accepted'),
+      limit(30)
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => mapIslandInviteDoc(d.id, d.data()));
+  } catch (error) {
+    if (isMissingIndexError(error)) {
+      try {
+        const fallbackQ = query(
+          collection(db, 'islandInvites'),
+          where('guestUid', '==', guestUid),
+          limit(40)
+        );
+        const snap = await getDocs(fallbackQ);
+        return snap.docs
+          .map((d) => mapIslandInviteDoc(d.id, d.data()))
+          .filter((i) => i.status === 'accepted');
+      } catch (err2) {
+        handleFirestoreError(err2, OperationType.LIST, path);
+      }
+    }
+    handleFirestoreError(error, OperationType.LIST, path);
+  }
+}
+
+export async function acceptIslandInvite(params: {
+  inviteId: string;
+  user: User;
+  guestName: string;
+  sourceMuseumId: string;
+  sourceMuseumTitle: string;
+  sourceMuseumUrl: string;
+}): Promise<IslandInvite> {
+  const inviteId = params.inviteId.trim().replace(/[^a-zA-Z0-9_-]/g, '');
+  const path = `islandInvites/${inviteId}`;
+  const guestName = clampStr(params.guestName.trim(), 80);
+  const sourceMuseumTitle = clampStr(params.sourceMuseumTitle.trim(), 100);
+  const sourceMuseumId = clampStr(params.sourceMuseumId.trim(), 128);
+  const sourceMuseumUrl = clampStr(params.sourceMuseumUrl.trim(), 1000);
+
+  if (!guestName) {
+    throw new Error('Escribe tu nombre o apodo de creador.');
+  }
+  if (!sourceMuseumTitle) {
+    throw new Error('Escribe el nombre de tu museo o proyecto de origen.');
+  }
+  if (!isValidSourceMuseumUrl(sourceMuseumUrl)) {
+    throw new Error('El enlace de origen debe ser https://... o ?museum=ID.');
+  }
+
+  try {
+    await updateDoc(doc(db, 'islandInvites', inviteId), {
+      status: 'accepted',
+      guestUid: params.user.uid,
+      guestName,
+      sourceMuseumId,
+      sourceMuseumTitle,
+      sourceMuseumUrl,
+      updatedAt: serverTimestamp(),
+    });
+    const refreshed = await fetchIslandInvite(inviteId);
+    if (!refreshed) {
+      throw new Error('No se pudo leer la invitación actualizada.');
+    }
+    return refreshed;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function revokeIslandInvite(inviteId: string): Promise<void> {
+  const path = `islandInvites/${inviteId}`;
+  try {
+    await updateDoc(doc(db, 'islandInvites', inviteId), {
+      status: 'revoked',
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function deleteIslandInvite(inviteId: string): Promise<void> {
+  const path = `islandInvites/${inviteId}`;
+  try {
+    await deleteDoc(doc(db, 'islandInvites', inviteId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
   }
 }

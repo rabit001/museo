@@ -141,7 +141,7 @@ service cloud.firestore {
         ]) &&
         data.keys().hasOnly([
           'museumId', 'ownerId', 'islandId', 'roomId', 'title', 'subtitle', 'body',
-          'kind', 'type', 'url', 'mediaDataUrl', 'isPublic', 'curatedFrom',
+          'kind', 'type', 'url', 'mediaDataUrl', 'isPublic', 'curatedFrom', 'loanInviteId',
           'saleStatus', 'priceLabel', 'mediumOrSize', 'paymentUrl',
           'createdAt', 'updatedAt'
         ]) &&
@@ -158,12 +158,51 @@ service cloud.firestore {
         data.mediaDataUrl is string && (data.mediaDataUrl == '' || (data.mediaDataUrl.size() <= 180000 && data.mediaDataUrl.matches('^data:image/.*'))) &&
         data.isPublic is bool &&
         (!('curatedFrom' in data) || isValidCuratedFrom(data.curatedFrom)) &&
+        (!('loanInviteId' in data) || isValidId(data.loanInviteId)) &&
         (!('saleStatus' in data) || (data.saleStatus is string && data.saleStatus in ['not_for_sale', 'for_sale', 'reserved', 'sold'])) &&
         (!('priceLabel' in data) || (data.priceLabel is string && data.priceLabel.size() <= 40)) &&
         (!('mediumOrSize' in data) || (data.mediumOrSize is string && data.mediumOrSize.size() <= 120)) &&
         (!('paymentUrl' in data) || (data.paymentUrl is string && (data.paymentUrl == '' || (data.paymentUrl.size() <= 1000 && data.paymentUrl.matches('^https?://.*'))))) &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
+    }
+
+    function isValidIslandInvite(data) {
+      return data.keys().hasAll([
+          'museumId', 'museumTitle', 'hostUid', 'hostName', 'islandId', 'islandTitle',
+          'status', 'guestUid', 'guestName', 'sourceMuseumId', 'sourceMuseumTitle',
+          'sourceMuseumUrl', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'museumId', 'museumTitle', 'hostUid', 'hostName', 'islandId', 'islandTitle',
+          'status', 'guestUid', 'guestName', 'sourceMuseumId', 'sourceMuseumTitle',
+          'sourceMuseumUrl', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.museumId) &&
+        data.museumTitle is string && data.museumTitle.size() >= 1 && data.museumTitle.size() <= 100 &&
+        isValidId(data.hostUid) &&
+        data.hostName is string && data.hostName.size() >= 1 && data.hostName.size() <= 80 &&
+        data.islandId is string && data.islandId.size() >= 1 && data.islandId.size() <= 80 &&
+        data.islandTitle is string && data.islandTitle.size() >= 1 && data.islandTitle.size() <= 80 &&
+        data.status is string && data.status in ['pending', 'accepted', 'revoked'] &&
+        (data.guestUid == null || isValidId(data.guestUid)) &&
+        data.guestName is string && data.guestName.size() <= 80 &&
+        data.sourceMuseumId is string && data.sourceMuseumId.size() <= 128 &&
+        data.sourceMuseumTitle is string && data.sourceMuseumTitle.size() <= 100 &&
+        data.sourceMuseumUrl is string && (
+          data.sourceMuseumUrl == '' ||
+          (data.sourceMuseumUrl.size() <= 1000 && data.sourceMuseumUrl.matches('^(\\?museum=[a-zA-Z0-9_\\-]+|https?://.*)$'))
+        ) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidLoanGuest(museumId, islandId, inviteId) {
+      return isValidId(inviteId) &&
+        get(/databases/$(database)/documents/islandInvites/$(inviteId)).data.museumId == museumId &&
+        get(/databases/$(database)/documents/islandInvites/$(inviteId)).data.islandId == islandId &&
+        get(/databases/$(database)/documents/islandInvites/$(inviteId)).data.guestUid == request.auth.uid &&
+        get(/databases/$(database)/documents/islandInvites/$(inviteId)).data.status == 'accepted';
     }
 
     function isValidGuestbookEntry(data) {
@@ -289,34 +328,118 @@ service cloud.firestore {
           incoming().ownerId == request.auth.uid &&
           incoming().createdAt == request.time &&
           incoming().updatedAt == request.time &&
-          get(/databases/$(database)/documents/museums/$(museumId)).data.ownerId == request.auth.uid &&
-          isValidCuratedSource(incoming());
+          isValidCuratedSource(incoming()) && (
+            get(/databases/$(database)/documents/museums/$(museumId)).data.ownerId == request.auth.uid || (
+              'loanInviteId' in incoming() &&
+              isValidLoanGuest(museumId, incoming().islandId, incoming().loanInviteId) &&
+              incoming().isPublic == get(/databases/$(database)/documents/museums/$(museumId)).data.isPublic
+            )
+          );
 
         allow update: if isVerifiedUser() &&
           isValidId(museumId) &&
           isValidId(pieceId) &&
           isValidPiece(incoming()) &&
-          isOwner(existing().ownerId) &&
           incoming().museumId == existing().museumId &&
           incoming().ownerId == existing().ownerId &&
           incoming().createdAt == existing().createdAt &&
-          incoming().updatedAt == request.time &&
-          get(/databases/$(database)/documents/museums/$(museumId)).data.ownerId == request.auth.uid && (
-            incoming().diff(existing()).affectedKeys().hasOnly([
-              'islandId', 'roomId', 'title', 'subtitle', 'body', 'kind', 'type', 'url', 'mediaDataUrl',
-              'saleStatus', 'priceLabel', 'mediumOrSize', 'paymentUrl', 'updatedAt'
-            ]) ||
-            incoming().diff(existing()).affectedKeys().hasOnly([
-              'isPublic', 'updatedAt'
-            ])
+          incoming().updatedAt == request.time && (
+            (
+              get(/databases/$(database)/documents/museums/$(museumId)).data.ownerId == request.auth.uid && (
+                (
+                  isOwner(existing().ownerId) &&
+                  incoming().diff(existing()).affectedKeys().hasOnly([
+                    'islandId', 'roomId', 'title', 'subtitle', 'body', 'kind', 'type', 'url', 'mediaDataUrl',
+                    'saleStatus', 'priceLabel', 'mediumOrSize', 'paymentUrl', 'updatedAt'
+                  ])
+                ) ||
+                incoming().diff(existing()).affectedKeys().hasOnly([
+                  'isPublic', 'updatedAt'
+                ])
+              )
+            ) || (
+              isOwner(existing().ownerId) &&
+              'loanInviteId' in existing() &&
+              incoming().islandId == existing().islandId &&
+              incoming().loanInviteId == existing().loanInviteId &&
+              isValidLoanGuest(museumId, existing().islandId, existing().loanInviteId) &&
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'roomId', 'title', 'subtitle', 'body', 'kind', 'type', 'url', 'mediaDataUrl',
+                'saleStatus', 'priceLabel', 'mediumOrSize', 'paymentUrl', 'updatedAt'
+              ])
+            )
           );
 
         allow delete: if isVerifiedUser() &&
           isValidId(museumId) &&
-          isValidId(pieceId) &&
-          isOwner(existing().ownerId) &&
-          get(/databases/$(database)/documents/museums/$(museumId)).data.ownerId == request.auth.uid;
+          isValidId(pieceId) && (
+            get(/databases/$(database)/documents/museums/$(museumId)).data.ownerId == request.auth.uid || (
+              isOwner(existing().ownerId) &&
+              'loanInviteId' in existing() &&
+              isValidLoanGuest(museumId, existing().islandId, existing().loanInviteId)
+            )
+          );
       }
+    }
+
+    // Loaned Island Invitations (Isla Prestada: magic link + guest permissions locked to one island)
+    match /islandInvites/{inviteId} {
+      allow get: if isValidId(inviteId);
+
+      allow list: if resource.data.status == 'accepted' || (
+        request.auth != null && (
+          resource.data.hostUid == request.auth.uid ||
+          resource.data.guestUid == request.auth.uid
+        )
+      );
+
+      allow create: if isVerifiedUser() &&
+        isValidId(inviteId) &&
+        isValidIslandInvite(incoming()) &&
+        incoming().hostUid == request.auth.uid &&
+        incoming().status == 'pending' &&
+        incoming().guestUid == null &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        get(/databases/$(database)/documents/museums/$(incoming().museumId)).data.ownerId == request.auth.uid;
+
+      allow update: if isVerifiedUser() &&
+        isValidId(inviteId) &&
+        isValidIslandInvite(incoming()) &&
+        incoming().museumId == existing().museumId &&
+        incoming().hostUid == existing().hostUid &&
+        incoming().islandId == existing().islandId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          (
+            existing().status == 'pending' &&
+            existing().guestUid == null &&
+            incoming().status == 'accepted' &&
+            incoming().guestUid == request.auth.uid &&
+            incoming().guestName.size() >= 1 &&
+            incoming().sourceMuseumTitle.size() >= 1 &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'guestUid', 'guestName', 'sourceMuseumId', 'sourceMuseumTitle', 'sourceMuseumUrl', 'updatedAt'
+            ])
+          ) || (
+            existing().hostUid == request.auth.uid &&
+            existing().status != 'revoked' &&
+            incoming().status == 'revoked' &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          ) || (
+            existing().status == 'accepted' &&
+            existing().guestUid == request.auth.uid &&
+            incoming().status == 'accepted' &&
+            incoming().guestUid == existing().guestUid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'guestName', 'sourceMuseumId', 'sourceMuseumTitle', 'sourceMuseumUrl', 'updatedAt'
+            ])
+          )
+        );
+
+      allow delete: if isVerifiedUser() &&
+        isValidId(inviteId) &&
+        existing().hostUid == request.auth.uid;
     }
 
     // Open Guestbook (reception & rooms, free nickname allowed, owner moderation)

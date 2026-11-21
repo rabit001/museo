@@ -97,6 +97,7 @@ export function loadMuseumState(): MuseumState {
       overrides: parsed.overrides && typeof parsed.overrides === 'object' ? parsed.overrides : {},
       hidden: Array.isArray(parsed.hidden) ? parsed.hidden : [],
       discoveredIds: Array.isArray(parsed.discoveredIds) ? parsed.discoveredIds : [],
+      islasPrestadas: Array.isArray(parsed.islasPrestadas) ? parsed.islasPrestadas : [],
     };
   } catch {
     return defaults;
@@ -215,6 +216,7 @@ export function createNewIsland(
     footer?: string;
     x?: number;
     y?: number;
+    loaned?: Island['loaned'];
   }
 ): { nextState: MuseumState; newIsland: Island; initialRoom: Room } {
   const existing = getResolvedIslands(state, false);
@@ -235,9 +237,10 @@ export function createNewIsland(
     y: pos.y,
     mapLabel,
     title,
-    eyebrow: input.eyebrow?.trim() || 'NUEVA ISLA DEL ARCHIPIÉLAGO',
+    eyebrow: input.eyebrow?.trim() || (input.loaned ? 'ISLA PRESTADA' : 'NUEVA ISLA DEL ARCHIPIÉLAGO'),
     description: input.description.trim() || 'Un territorio recién emergido del océano de ideas.',
     footer: input.footer?.trim() || 'Colección insular',
+    ...(input.loaned ? { loaned: input.loaned } : {}),
   };
 
   const initialRoom: Room = {
@@ -254,6 +257,9 @@ export function createNewIsland(
       ...state.rooms,
       [id]: [initialRoom],
     },
+    ...(input.loaned
+      ? { islasPrestadas: [...(state.islasPrestadas || []), input.loaned] }
+      : {}),
   };
 
   return { nextState, newIsland, initialRoom };
@@ -331,10 +337,17 @@ export async function exportMuseumBackup(state: MuseumState): Promise<void> {
     }
   }
 
+  const resolvedLoaned = getResolvedIslands(state, false)
+    .map((isl) => isl.loaned)
+    .filter((l): l is NonNullable<Island['loaned']> => Boolean(l));
+
   const payload = {
     format: 'museo404-backup-v2',
     exportedAt: new Date().toISOString(),
-    state,
+    state: {
+      ...state,
+      islasPrestadas: resolvedLoaned,
+    },
     media,
   };
 
@@ -394,6 +407,7 @@ export async function importMuseumBackup(file: File): Promise<MuseumState> {
     overrides: raw.overrides || {},
     hidden: Array.isArray(raw.hidden) ? raw.hidden : [],
     discoveredIds: Array.isArray(raw.discoveredIds) ? raw.discoveredIds : [],
+    islasPrestadas: Array.isArray(raw.islasPrestadas) ? raw.islasPrestadas : [],
   };
 
   saveMuseumState(importedState);

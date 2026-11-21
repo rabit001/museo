@@ -218,6 +218,13 @@
           "type": "object",
           "description": "Atribución opcional cuando la pieza fue compartida desde otro museo."
         },
+        "loanInviteId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID de invitación aceptada cuando la pieza pertenece a una isla prestada."
+        },
         "saleStatus": {
           "type": "string",
           "enum": ["not_for_sale", "for_sale", "reserved", "sold"],
@@ -455,6 +462,111 @@
       },
       "required": ["theme", "updatedAt"]
     },
+    "IslandInvite": {
+      "title": "IslandInvite",
+      "description": "Invitación mágica / código corto para prestar una isla a otro creador con permisos limitados a esa isla.",
+      "type": "object",
+      "properties": {
+        "museumId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID del museo anfitrión."
+        },
+        "museumTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Título del museo anfitrión."
+        },
+        "hostUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID del propietario del museo anfitrión."
+        },
+        "hostName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Nombre del anfitrión."
+        },
+        "islandId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "ID de la isla prestada dentro del museo anfitrión."
+        },
+        "islandTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Nombre de la isla prestada."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "accepted", "revoked"],
+          "description": "Estado de la invitación de préstamo."
+        },
+        "guestUid": {
+          "type": "string",
+          "description": "UID del creador invitado tras aceptar o null si sigue pendiente."
+        },
+        "guestName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 80,
+          "description": "Nombre público del invitado."
+        },
+        "sourceMuseumId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 128,
+          "description": "ID del museo de origen del invitado (opcional)."
+        },
+        "sourceMuseumTitle": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 100,
+          "description": "Nombre visible del museo o proyecto de origen."
+        },
+        "sourceMuseumUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000,
+          "pattern": "^(|\\?museum=[a-zA-Z0-9_\\-]+|https?://.*)$",
+          "description": "Enlace permanente al museo de origen."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Marca temporal de creación."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Marca temporal de actualización."
+        }
+      },
+      "required": [
+        "museumId",
+        "museumTitle",
+        "hostUid",
+        "hostName",
+        "islandId",
+        "islandTitle",
+        "status",
+        "guestUid",
+        "guestName",
+        "sourceMuseumId",
+        "sourceMuseumTitle",
+        "sourceMuseumUrl",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
     "UserPrivateProfile": {
       "title": "UserPrivateProfile",
       "description": "Perfil privado del creador con correo aislado y personaje elegido.",
@@ -500,7 +612,11 @@
     },
     "/museums/{museumId}/pieces/{pieceId}": {
       "schema": { "$ref": "#/entities/MuseumPiece" },
-      "description": "Piezas exhibidas dentro de cada museo, incluyendo obras en venta y piezas compartidas con atribución."
+      "description": "Piezas exhibidas dentro de cada museo, incluyendo obras en venta, piezas compartidas y piezas de islas prestadas."
+    },
+    "/islandInvites/{inviteId}": {
+      "schema": { "$ref": "#/entities/IslandInvite" },
+      "description": "Invitaciones de préstamo de islas. Las invitaciones pendientes se consultan solo por ID/código mágico o por el anfitrión; las aceptadas permiten mostrar atribución y habilitar edición limitada al invitado."
     },
     "/guestbook/{entryId}": {
       "schema": { "$ref": "#/entities/GuestbookEntry" },

@@ -11,6 +11,7 @@ interface SupportProjectModalProps {
   flagshipDonation?: DonationConfig;
   canEditActiveMuseum: boolean;
   onOpenEditorAppearance: () => void;
+  onOpenGuide?: () => void;
   onClose: () => void;
 }
 
@@ -27,6 +28,7 @@ export const SupportProjectModal: React.FC<SupportProjectModalProps> = ({
   flagshipDonation,
   canEditActiveMuseum,
   onOpenEditorAppearance,
+  onOpenGuide,
   onClose,
 }) => {
   const [tab, setTab] = useState<'donate' | 'contribute'>('donate');
@@ -219,13 +221,17 @@ export const SupportProjectModal: React.FC<SupportProjectModalProps> = ({
 
           {tab === 'contribute' && (
             <div className="space-y-5">
-              <div className="border border-[#163d4a]/25 bg-[#faf8eb] p-4">
+              <div className="border-2 border-[#163d4a] bg-[#faf8eb] p-5 shadow-[6px_6px_0_rgba(22,61,74,0.08)]">
                 <p className="text-xs font-bold uppercase tracking-widest text-[#1d6873]">
-                  FILOSOFÍA DEL PROYECTO
+                  ¿ALGUIEN QUIERE CONSTRUIR MUSEO 404 CONMIGO?
                 </p>
-                <p className="mt-1.5 text-[15px] leading-relaxed text-[#223f45]">
-                  <strong>MUSEO 404 · siNOMBRE</strong> nace como una red cultural abierta donde cualquier creador puede levantar un archipiélago propio y compartir obras entre museos sin muros de pago ni registros obligatorios para quienes visitan.
+                <p className="mt-2 text-[15px] leading-relaxed text-[#223f45]">
+                  No queremos construir otro escaparate donde todos compitan por llamar la atención. Queremos un lugar donde podamos <strong>prestarnos espacios, descubrirnos y ayudarnos a existir</strong>.
                 </p>
+                <p className="mt-2 text-sm leading-relaxed text-[#2d4e53]">
+                  El proyecto es <strong>gratuito, abierto y vive para crecer en comunidad y en GitHub</strong>. Si desarrollas en React/TypeScript/Three.js, haces pixel art, diseñas o curas colecciones, puedes revisar <code>CONTRIBUTING.md</code>, proponer mejoras o prestarle una isla a alguien que apenas comienza.
+                </p>
+                <p className="mt-2 text-sm font-bold text-[#a24d2e]">Primero nosotros.</p>
               </div>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -235,7 +241,7 @@ export const SupportProjectModal: React.FC<SupportProjectModalProps> = ({
                     <h3 className="text-base font-bold">Código y mundo 3D</h3>
                   </div>
                   <p className="mt-1.5 text-sm leading-relaxed text-[#33555a]">
-                    Mejoras en Three.js, exploración 2D, accesibilidad en móviles, rendimiento y reglas de seguridad (revisa <code>CONTRIBUTING.md</code>).
+                    Mejoras en Three.js, exploración 2D, accesibilidad en móviles, sistema de islas prestadas y reglas de seguridad (<code>CONTRIBUTING.md</code>).
                   </p>
                 </div>
 
@@ -252,22 +258,43 @@ export const SupportProjectModal: React.FC<SupportProjectModalProps> = ({
                 <div className="border border-[#163d4a]/25 bg-[#faf8eb] p-4">
                   <div className="flex items-center gap-2 text-[#a24d2e]">
                     <Compass className="h-4 w-4 shrink-0" />
-                    <h3 className="text-base font-bold">Curaduría compartida</h3>
+                    <h3 className="text-base font-bold">Prestar islas y curar</h3>
                   </div>
                   <p className="mt-1.5 text-sm leading-relaxed text-[#33555a]">
-                    Crea tu propio archipiélago, publica reseñas, cartas o catálogos y enlaza piezas de otros museos respetando siempre la autoría.
+                    Crea tu propio archipiélago, genera invitaciones mágicas para prestar una isla a proyectos emergentes y mantén siempre visible su autoría.
                   </p>
                 </div>
 
                 <div className="border border-[#163d4a]/25 bg-[#faf8eb] p-4">
                   <div className="flex items-center gap-2 text-[#a24d2e]">
                     <Users className="h-4 w-4 shrink-0" />
-                    <h3 className="text-base font-bold">Comunidad y difusión</h3>
+                    <h3 className="text-base font-bold">Comunidad y voz</h3>
                   </div>
                   <p className="mt-1.5 text-sm leading-relaxed text-[#33555a]">
-                    Firma los libros de visitas en recepción y salas, recomienda museos independientes y reporta ideas o mejoras.
+                    Firma los libros de visitas en recepción y salas, comparte tus ideas en GitHub Issues/Discussions y ayuda a decidir el rumbo del museo.
                   </p>
                 </div>
+              </div>
+
+              <div className="border border-[#163d4a]/30 bg-[#e9e6d0] p-4">
+                <p className="font-pixel text-[9px] text-[#163d4a]">
+                  CANAL DE COMUNIDAD Y DOCUMENTOS CLAVE
+                </p>
+                <p className="mt-1.5 text-sm text-[#223f45]">
+                  Encuentra <code>README.md</code>, <code>CODE_OF_CONDUCT.md</code>, <code>CONTRIBUTING.md</code> y los primeros 8 issues públicos en <code>docs/ISSUES_INICIALES.md</code>.
+                </p>
+                {onOpenGuide && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenGuide();
+                    }}
+                    className="font-pixel mt-3 inline-flex items-center gap-2 border border-[#183c49] bg-[#1d6873] px-3.5 py-2 text-[9px] text-[#fff9e5] hover:bg-[#b25f37]"
+                  >
+                    <span>LEER MANIFIESTO Y GUÍA EN 3 MINUTOS</span>
+                  </button>
+                )}
               </div>
             </div>
           )}

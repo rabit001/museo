@@ -1,0 +1,18 @@
+name: Propuesta de Isla Prestada o Curaduría
+description: Propón un nuevo tema, bioma, plantilla o mecánica para prestarnos espacios.
+title: "[Isla Prestada]: "
+labels: ["isla-prestada", "design"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: Idea de isla, plantilla o curaduría
+      description: Describe el bioma, tipo de piezas o dinámica de intercambio entre museos.
+    validations:
+      required: true
+  - type: textarea
+    id: audience
+    attributes:
+      label: ¿A qué creadores o comunidades ayudaría primero?
+    validations:
+      required: true

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { User } from 'firebase/auth';
-import { Compass, Lock, LogIn, Pencil, Plus, RefreshCw, Search, Sparkles, X } from 'lucide-react';
+import { BookOpen, Compass, KeyRound, Link2, Lock, LogIn, Pencil, Plus, RefreshCw, Search, Shuffle, Sparkles, X } from 'lucide-react';
 import { CATEGORY_META } from '../data/themes';
 import { CloudMuseum, MuseumCategory } from '../types/museum';
 
@@ -15,8 +15,12 @@ interface MuseumDirectoryModalProps {
   onRefresh: () => void;
   onOpenFlagship: () => void;
   onOpenCloudMuseum: (museum: CloudMuseum) => void;
+  onOpenMuseumById?: (museumId: string) => void;
   onOpenEditorForMuseum: (museum: CloudMuseum) => void;
   onOpenCreateMuseum: () => void;
+  onOpenInviteModal: () => void;
+  onOpenGuide?: () => void;
+  onCopyMuseumLink?: (museum: CloudMuseum) => void;
   onSignIn: () => void;
   onClose: () => void;
 }
@@ -32,13 +36,51 @@ export const MuseumDirectoryModal: React.FC<MuseumDirectoryModalProps> = ({
   onRefresh,
   onOpenFlagship,
   onOpenCloudMuseum,
+  onOpenMuseumById,
   onOpenEditorForMuseum,
   onOpenCreateMuseum,
+  onOpenInviteModal,
+  onOpenGuide,
+  onCopyMuseumLink,
   onSignIn,
   onClose,
 }) => {
   const [searchText, setSearchText] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<'all' | MuseumCategory>('all');
+  const [jumpInput, setJumpInput] = useState('');
+
+  const networkTotals = useMemo(() => {
+    const totalIslands = publicMuseums.reduce((acc, m) => acc + (m.islandCount || 0), 0);
+    const totalPieces = publicMuseums.reduce((acc, m) => acc + (m.pieceCount || 0), 0);
+    return {
+      museums: publicMuseums.length,
+      islands: totalIslands,
+      pieces: totalPieces,
+    };
+  }, [publicMuseums]);
+
+  const handleOpenRandomMuseum = () => {
+    const candidates = publicMuseums.filter((m) => m.id !== activeMuseumId);
+    const pool = candidates.length > 0 ? candidates : publicMuseums;
+    if (pool.length === 0) {
+      onOpenFlagship();
+      return;
+    }
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    onOpenCloudMuseum(pick);
+  };
+
+  const handleQuickJump = (e: React.FormEvent) => {
+    e.preventDefault();
+    const raw = jumpInput.trim();
+    if (!raw || !onOpenMuseumById) return;
+    const match = raw.match(/[?&]museum=([a-zA-Z0-9_-]+)/);
+    const cleanId = (match ? match[1] : raw).replace(/^\/+/, '');
+    if (!cleanId) return;
+    setJumpInput('');
+    onClose();
+    onOpenMuseumById(cleanId);
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -101,6 +143,17 @@ export const MuseumDirectoryModal: React.FC<MuseumDirectoryModalProps> = ({
             </button>
             <button
               type="button"
+              onClick={() => {
+                onClose();
+                onOpenInviteModal();
+              }}
+              className="inline-flex items-center gap-1.5 border border-[#7fd6cc] bg-[#0e3f4e] px-3 py-2 text-xs font-semibold text-[#e6fbf8] hover:bg-[#175b6e]"
+            >
+              <KeyRound className="h-3.5 w-3.5 text-[#f4d47d]" />
+              Tengo invitación
+            </button>
+            <button
+              type="button"
               onClick={onOpenCreateMuseum}
               className="inline-flex items-center gap-1.5 border-2 border-[#f2d17b] bg-[#bd7544] px-3.5 py-2 text-xs font-bold text-[#fff9e8] hover:bg-[#a24d2e]"
             >
@@ -119,6 +172,88 @@ export const MuseumDirectoryModal: React.FC<MuseumDirectoryModalProps> = ({
         </header>
 
         <div className="museum-scroll flex-1 space-y-6 overflow-y-auto p-5 sm:p-6">
+          {/* Cinta de Red Viva y Descubrimiento */}
+          <section className="flex flex-wrap items-center justify-between gap-3 border border-[#7fd6cc]/35 bg-[#082431] p-4">
+            <div className="flex flex-wrap items-center gap-4 text-xs">
+              <div>
+                <span className="block text-[10px] uppercase tracking-wider text-[#9fc4b8]">
+                  Museos públicos
+                </span>
+                <strong className="text-lg font-bold text-[#fff9e8] tabular-nums">
+                  {networkTotals.museums}
+                </strong>
+              </div>
+              <div className="h-7 w-px bg-white/15" />
+              <div>
+                <span className="block text-[10px] uppercase tracking-wider text-[#9fc4b8]">
+                  Islas en red
+                </span>
+                <strong className="text-lg font-bold text-[#fff9e8] tabular-nums">
+                  {networkTotals.islands}
+                </strong>
+              </div>
+              <div className="h-7 w-px bg-white/15" />
+              <div>
+                <span className="block text-[10px] uppercase tracking-wider text-[#9fc4b8]">
+                  Obras expuestas
+                </span>
+                <strong className="text-lg font-bold text-[#fff9e8] tabular-nums">
+                  {networkTotals.pieces}
+                </strong>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {publicMuseums.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleOpenRandomMuseum}
+                  className="inline-flex min-h-[38px] items-center gap-1.5 border border-[#f2d17b] bg-[#1d6873] px-3 py-1.5 text-xs font-bold text-[#fff9e8] hover:bg-[#b25f37]"
+                >
+                  <Shuffle className="h-3.5 w-3.5 text-[#f4d47d]" />
+                  <span>Museo al azar</span>
+                </button>
+              )}
+              {onOpenGuide && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenGuide();
+                  }}
+                  className="inline-flex min-h-[38px] items-center gap-1.5 border border-[#d8c47b]/60 bg-[#062230] px-3 py-1.5 text-xs font-semibold text-[#fff5d7] hover:bg-[#174d58]"
+                >
+                  <BookOpen className="h-3.5 w-3.5 text-[#f4d47d]" />
+                  <span>Manifiesto · Guía 3 min</span>
+                </button>
+              )}
+            </div>
+          </section>
+
+          {onOpenMuseumById && (
+            <form
+              onSubmit={handleQuickJump}
+              className="flex flex-wrap items-center gap-2 border border-[#e0d7a5]/20 bg-[#07212d] px-4 py-3"
+            >
+              <label htmlFor="quick-jump-museum" className="text-xs font-semibold text-[#c4ded2]">
+                Ir directo por enlace o ID de museo:
+              </label>
+              <input
+                id="quick-jump-museum"
+                value={jumpInput}
+                onChange={(e) => setJumpInput(e.target.value)}
+                placeholder="Pega ?museum=... o el ID del museo"
+                className="min-w-[200px] flex-1 border border-[#537c79] bg-[#f0eedc] px-3 py-1.5 text-sm text-[#183b42]"
+              />
+              <button
+                type="submit"
+                className="border border-[#f2d17b] bg-[#1d6873] px-3.5 py-1.5 text-xs font-bold text-[#fff9e8] hover:bg-[#b25f37]"
+              >
+                Abrir museo
+              </button>
+            </form>
+          )}
+
           {/* Museo original fijo */}
           <section>
             <div className="flex flex-wrap items-center justify-between gap-4 border-2 border-[#f4d47d]/60 bg-gradient-to-r from-[#174a57] to-[#0d3141] p-4">
@@ -377,17 +512,30 @@ export const MuseumDirectoryModal: React.FC<MuseumDirectoryModalProps> = ({
                         <span className="text-xs text-[#9fc4b8] tabular-nums">
                           {museum.islandCount} islas · {museum.pieceCount} piezas
                         </span>
-                        <button
-                          type="button"
-                          onClick={() => onOpenCloudMuseum(museum)}
-                          className={`border px-3 py-1.5 text-xs font-bold ${
-                            isCurrent
-                              ? 'border-[#86d2c7] bg-[#134e5e] text-[#a7efe2]'
-                              : 'border-[#f2d17b] bg-[#1d6873] text-[#fff9e8] hover:bg-[#b25f37]'
-                          }`}
-                        >
-                          {isCurrent ? 'Visitando' : 'Entrar al museo'}
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          {onCopyMuseumLink && (
+                            <button
+                              type="button"
+                              onClick={() => onCopyMuseumLink(museum)}
+                              title="Copiar enlace directo al museo"
+                              aria-label={`Copiar enlace de ${museum.title}`}
+                              className="inline-flex items-center justify-center border border-[#d8c47b]/45 bg-[#062230] p-1.5 text-[#f4d47d] hover:bg-[#174d58]"
+                            >
+                              <Link2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => onOpenCloudMuseum(museum)}
+                            className={`border px-3 py-1.5 text-xs font-bold ${
+                              isCurrent
+                                ? 'border-[#86d2c7] bg-[#134e5e] text-[#a7efe2]'
+                                : 'border-[#f2d17b] bg-[#1d6873] text-[#fff9e8] hover:bg-[#b25f37]'
+                            }`}
+                          >
+                            {isCurrent ? 'Visitando' : 'Entrar al museo'}
+                          </button>
+                        </div>
                       </div>
                     </article>
                   );

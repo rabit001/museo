@@ -165,6 +165,9 @@ function mapPieceDoc(id: string, data: Record<string, any>): MuseumPiece {
   if (data.curatedFrom && typeof data.curatedFrom === 'object') {
     piece.curatedFrom = sanitizeCuratedFrom(data.curatedFrom as CuratedFromMeta);
   }
+  if (typeof data.loanInviteId === 'string' && data.loanInviteId) {
+    piece.loanInviteId = data.loanInviteId;
+  }
   return piece;
 }
 
@@ -247,17 +250,29 @@ export async function fetchMuseumById(museumId: string): Promise<CloudMuseum | n
 
 export async function fetchMuseumPieces(
   museumId: string,
-  ownerUid?: string | null
+  ownerUid?: string | null,
+  isPublic = true
 ): Promise<MuseumPiece[]> {
   const path = `museums/${museumId}/pieces`;
   try {
     const colRef = collection(db, 'museums', museumId, 'pieces');
-    const q =
-      ownerUid && auth.currentUser?.uid === ownerUid
-        ? query(colRef, where('ownerId', '==', ownerUid), limit(250))
-        : query(colRef, where('isPublic', '==', true), limit(250));
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => mapPieceDoc(d.id, d.data()));
+    if (isPublic) {
+      const q = query(colRef, where('isPublic', '==', true), limit(250));
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => mapPieceDoc(d.id, d.data()));
+    }
+    const uid = auth.currentUser?.uid;
+    if (ownerUid && uid === ownerUid) {
+      const q = query(colRef, where('ownerId', '==', ownerUid), limit(250));
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => mapPieceDoc(d.id, d.data()));
+    }
+    if (uid) {
+      const q = query(colRef, where('ownerId', '==', uid), limit(250));
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => mapPieceDoc(d.id, d.data()));
+    }
+    return [];
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
   }
@@ -417,13 +432,11 @@ export async function updateCloudMuseumMetadata(
     await updateDoc(doc(db, 'museums', museum.id), payload);
 
     if (patch.isPublic !== museum.isPublic) {
-      const piecesSnap = await getDocs(
-        query(
-          collection(db, 'museums', museum.id, 'pieces'),
-          where('ownerId', '==', museum.ownerId),
-          limit(250)
-        )
-      );
+      const piecesCol = collection(db, 'museums', museum.id, 'pieces');
+      const piecesQuery = museum.isPublic
+        ? query(piecesCol, where('isPublic', '==', true), limit(250))
+        : query(piecesCol, where('ownerId', '==', museum.ownerId), limit(250));
+      const piecesSnap = await getDocs(piecesQuery);
       if (!piecesSnap.empty) {
         const batch = writeBatch(db);
         piecesSnap.docs.forEach((d) => {
@@ -497,6 +510,7 @@ export async function saveCloudPiece(
     url: string;
     mediaDataUrl?: string | null;
     curatedFrom?: CuratedFromMeta;
+    loanInviteId?: string;
     saleStatus?: SaleStatus;
     priceLabel?: string;
     mediumOrSize?: string;
@@ -507,6 +521,13 @@ export async function saveCloudPiece(
   const isNew = !input.id;
   const pieceId = input.id ? cleanId(input.id, 'piece') : makeId('piece');
   const path = `museums/${museum.id}/pieces/${pieceId}`;
+  const currentUid = auth.currentUser?.uid || museum.ownerId;
+  const isMuseumOwner = currentUid === museum.ownerId;
+  const loanInviteId = input.loanInviteId ? cleanId(input.loanInviteId, 'inv') : undefined;
+  if (!isMuseumOwner && !loanInviteId) {
+    throw new Error('No tienes permiso para guardar piezas en este museo.');
+  }
+
   const kind: PieceKind =
     input.type === 'image'
       ? 'image'
@@ -546,10 +567,9 @@ export async function saveCloudPiece(
   try {
     if (isNew) {
       const nextPieceCount = Math.min(500, currentTotalPieces + 1);
-      const batch = writeBatch(db);
       const payload: Record<string, unknown> = {
         museumId: museum.id,
-        ownerId: museum.ownerId,
+        ownerId: currentUid,
         islandId,
         roomId,
         title,
@@ -570,12 +590,21 @@ export async function saveCloudPiece(
       if (input.curatedFrom) {
         payload.curatedFrom = sanitizeCuratedFrom(input.curatedFrom);
       }
-      batch.set(doc(db, 'museums', museum.id, 'pieces', pieceId), payload);
-      batch.update(doc(db, 'museums', museum.id), {
-        pieceCount: nextPieceCount,
-        updatedAt: serverTimestamp(),
-      });
-      await batch.commit();
+      if (loanInviteId) {
+        payload.loanInviteId = loanInviteId;
+      }
+
+      if (isMuseumOwner) {
+        const batch = writeBatch(db);
+        batch.set(doc(db, 'museums', museum.id, 'pieces', pieceId), payload);
+        batch.update(doc(db, 'museums', museum.id), {
+          pieceCount: nextPieceCount,
+          updatedAt: serverTimestamp(),
+        });
+        await batch.commit();
+      } else {
+        await setDoc(doc(db, 'museums', museum.id, 'pieces', pieceId), payload);
+      }
 
       return {
         piece: {
@@ -590,18 +619,18 @@ export async function saveCloudPiece(
           url,
           mediaDataUrl: mediaDataUrl || null,
           custom: true,
-          curatedFrom: input.curatedFrom ? sanitizeCuratedFrom(input.curatedFrom) : undefined,
+          ...(input.curatedFrom ? { curatedFrom: sanitizeCuratedFrom(input.curatedFrom) } : {}),
+          ...(loanInviteId ? { loanInviteId } : {}),
           saleStatus,
           priceLabel,
           mediumOrSize,
           paymentUrl,
         },
-        nextPieceCount,
+        nextPieceCount: isMuseumOwner ? nextPieceCount : currentTotalPieces,
       };
     }
 
-    await updateDoc(doc(db, 'museums', museum.id, 'pieces', pieceId), {
-      islandId,
+    const updatePayload: Record<string, unknown> = {
       roomId,
       title,
       subtitle,
@@ -615,7 +644,12 @@ export async function saveCloudPiece(
       mediumOrSize,
       paymentUrl,
       updatedAt: serverTimestamp(),
-    });
+    };
+    if (isMuseumOwner) {
+      updatePayload.islandId = islandId;
+    }
+
+    await updateDoc(doc(db, 'museums', museum.id, 'pieces', pieceId), updatePayload);
 
     return {
       piece: {
@@ -630,7 +664,8 @@ export async function saveCloudPiece(
         url,
         mediaDataUrl: mediaDataUrl || null,
         custom: true,
-        curatedFrom: input.curatedFrom,
+        ...(input.curatedFrom ? { curatedFrom: input.curatedFrom } : {}),
+        ...(loanInviteId ? { loanInviteId } : {}),
         saleStatus,
         priceLabel,
         mediumOrSize,
@@ -646,19 +681,24 @@ export async function saveCloudPiece(
 export async function deleteCloudPiece(
   museumId: string,
   pieceId: string,
-  currentTotalPieces: number
+  currentTotalPieces: number,
+  isMuseumOwner = true
 ): Promise<number> {
   const path = `museums/${museumId}/pieces/${pieceId}`;
   const nextPieceCount = Math.max(0, currentTotalPieces - 1);
   try {
-    const batch = writeBatch(db);
-    batch.delete(doc(db, 'museums', museumId, 'pieces', pieceId));
-    batch.update(doc(db, 'museums', museumId), {
-      pieceCount: nextPieceCount,
-      updatedAt: serverTimestamp(),
-    });
-    await batch.commit();
-    return nextPieceCount;
+    if (isMuseumOwner) {
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'museums', museumId, 'pieces', pieceId));
+      batch.update(doc(db, 'museums', museumId), {
+        pieceCount: nextPieceCount,
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+      return nextPieceCount;
+    }
+    await deleteDoc(doc(db, 'museums', museumId, 'pieces', pieceId));
+    return currentTotalPieces;
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }

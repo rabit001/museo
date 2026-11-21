@@ -278,6 +278,28 @@ export function buildArchipelagoWorld3D(
       opacity: 0.72,
     })
   );
+  const liminalMistMat = trackMat(
+    new THREE.MeshStandardMaterial({
+      color: 0xeaf4fa,
+      emissive: 0xc8dce8,
+      emissiveIntensity: 0.42,
+      roughness: 0.9,
+      metalness: 0.0,
+      transparent: true,
+      opacity: 0.42,
+    })
+  );
+  const liminalMistOuterMat = trackMat(
+    new THREE.MeshStandardMaterial({
+      color: 0xdcebf4,
+      emissive: 0xaec8d9,
+      emissiveIntensity: 0.25,
+      roughness: 0.95,
+      metalness: 0.0,
+      transparent: true,
+      opacity: 0.22,
+    })
+  );
 
   const colliders: CircleCollider[] = [];
   const triggers: ExhibitTrigger[] = [];
@@ -555,6 +577,25 @@ export function buildArchipelagoWorld3D(
     topDeck.position.set(cx, DECK_Y - 0.17, cz);
     topDeck.receiveShadow = true;
     group.add(topDeck);
+
+    // Niebla liminal cuando la isla es prestada por otro museo
+    if (island.loaned) {
+      const innerMist = new THREE.Mesh(
+        trackGeo(new THREE.RingGeometry(radius * 0.96, radius * 1.18, 28)),
+        liminalMistMat
+      );
+      innerMist.rotation.x = -Math.PI / 2;
+      innerMist.position.set(cx, DECK_Y + 0.06, cz);
+      group.add(innerMist);
+
+      const outerMist = new THREE.Mesh(
+        trackGeo(new THREE.RingGeometry(radius * 1.12, radius * 1.42, 28)),
+        liminalMistOuterMat
+      );
+      outerMist.rotation.x = -Math.PI / 2;
+      outerMist.position.set(cx, 0.28, cz);
+      group.add(outerMist);
+    }
 
     // Central plaza path ring
     const plaza = new THREE.Mesh(
@@ -936,7 +977,9 @@ export function buildArchipelagoWorld3D(
       px,
       pz,
       island.title,
-      'Abrir colección y salas',
+      island.loaned
+        ? `Prestada por ${island.loaned.sourceMuseumTitle}`
+        : 'Abrir colección y salas',
       island.id,
       'island'
     );

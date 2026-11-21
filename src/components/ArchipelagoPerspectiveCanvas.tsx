@@ -731,8 +731,10 @@ export const ArchipelagoPerspectiveCanvas: React.FC<ArchipelagoPerspectiveCanvas
 
     const resize = () => {
       const parent = canvas.parentElement;
-      const w = parent?.clientWidth || window.innerWidth;
-      const h = parent?.clientHeight || window.innerHeight;
+      const rawW = parent?.clientWidth || window.innerWidth || 1;
+      const rawH = parent?.clientHeight || window.innerHeight || 1;
+      const w = Math.max(1, Math.round(rawW));
+      const h = Math.max(1, Math.round(rawH));
       canvas.width = w;
       canvas.height = h;
       bgCanvas.width = Math.max(240, Math.round(w * 0.55));
@@ -740,6 +742,13 @@ export const ArchipelagoPerspectiveCanvas: React.FC<ArchipelagoPerspectiveCanvas
     };
     resize();
     window.addEventListener('resize', resize);
+    const resizeObserver =
+      typeof ResizeObserver !== 'undefined' && canvas.parentElement
+        ? new ResizeObserver(() => resize())
+        : null;
+    if (resizeObserver && canvas.parentElement) {
+      resizeObserver.observe(canvas.parentElement);
+    }
 
     let rafId = 0;
     let lastTime = performance.now();
@@ -948,6 +957,10 @@ export const ArchipelagoPerspectiveCanvas: React.FC<ArchipelagoPerspectiveCanvas
 
       const W = canvas.width;
       const H = canvas.height;
+      if (W <= 0 || H <= 0) {
+        rafId = requestAnimationFrame(renderFrame);
+        return;
+      }
       const fovPx = H * 0.95;
 
       const project = (wx: number, wy: number, wz: number): ProjectedPoint | null => {
@@ -1037,13 +1050,27 @@ export const ArchipelagoPerspectiveCanvas: React.FC<ArchipelagoPerspectiveCanvas
         drawQueue.push({
           depth: islDepth,
           draw: () => {
-            // Sea foam ring
+            // Sea foam ring (or liminal mist halo for loaned islands)
             if (botPts.length >= 4) {
-              ctx.fillStyle = 'rgba(188, 244, 248, 0.55)';
+              ctx.fillStyle = node.island.loaned
+                ? 'rgba(240, 248, 255, 0.58)'
+                : 'rgba(188, 244, 248, 0.55)';
               ctx.beginPath();
               botPts.forEach((pt, idx) => (idx === 0 ? ctx.moveTo(pt.sx, pt.sy + 4) : ctx.lineTo(pt.sx, pt.sy + 4)));
               ctx.closePath();
               ctx.fill();
+            }
+
+            if (node.island.loaned && topPts.length >= 4) {
+              const pulse = 0.24 + Math.sin(elapsed * 1.6) * 0.08;
+              ctx.save();
+              ctx.strokeStyle = `rgba(244, 250, 255, ${pulse.toFixed(2)})`;
+              ctx.lineWidth = 10;
+              ctx.beginPath();
+              topPts.forEach((pt, idx) => (idx === 0 ? ctx.moveTo(pt.sx, pt.sy) : ctx.lineTo(pt.sx, pt.sy)));
+              ctx.closePath();
+              ctx.stroke();
+              ctx.restore();
             }
 
             // Cliff skirt
@@ -1417,7 +1444,14 @@ export const ArchipelagoPerspectiveCanvas: React.FC<ArchipelagoPerspectiveCanvas
       const dofCutoff = focusDepth + Math.max(20, cs.dist * 1.9);
 
       // Draw distant background elements, softly blur via downsampled pass if DOF enabled
-      if (dofEnabledRef.current && bgCtx) {
+      if (
+        dofEnabledRef.current &&
+        bgCtx &&
+        canvas.width > 0 &&
+        canvas.height > 0 &&
+        bgCanvas.width > 0 &&
+        bgCanvas.height > 0
+      ) {
         for (const item of drawQueue) {
           if (item.depth > dofCutoff) {
             item.draw();
@@ -1461,6 +1495,7 @@ export const ArchipelagoPerspectiveCanvas: React.FC<ArchipelagoPerspectiveCanvas
       window.removeEventListener('pointerup', onPointerUp);
       canvas.removeEventListener('wheel', onWheel);
       window.removeEventListener('resize', resize);
+      resizeObserver?.disconnect();
     };
   }, []);
 

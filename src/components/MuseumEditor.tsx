@@ -3,13 +3,17 @@ import { User } from 'firebase/auth';
 import {
   ArrowLeft,
   CheckCircle2,
+  Copy,
   Download,
   Heart,
+  KeyRound,
+  Link2,
   Palette,
   Plus,
   RefreshCw,
   RotateCcw,
   ShoppingBag,
+  Sparkles,
   Trash2,
   Upload,
   X,
@@ -18,8 +22,13 @@ import { CHARACTER_PROFILES } from '../data/characters';
 import { BIOME_LABELS, ORIGINAL_ISLANDS, getBasePiecesForIsland } from '../data/initialContent';
 import { CATEGORY_META, DEFAULT_MUSEUM_THEME, MUSEUM_THEME_PRESETS } from '../data/themes';
 import {
+  createIslandInvite,
+  deleteIslandInvite,
   deletePurchaseInquiry,
+  fetchHostInvitesForMuseum,
   fetchOwnerInquiries,
+  isValidSourceMuseumUrl,
+  revokeIslandInvite,
   sanitizeDonationConfig,
   updateInquiryStatus,
 } from '../firebase/interactions';
@@ -31,7 +40,7 @@ import {
   updateCloudMuseumMetadata,
   updateCloudMuseumStructure,
 } from '../firebase/museumNetwork';
-import { compactImage, compactImageToDataUrl, deleteMedia, putMedia } from '../storage/mediaDb';
+import { compactImage, compactImageToDataUrl, deleteMedia, getMedia, putMedia } from '../storage/mediaDb';
 import {
   createNewIsland,
   deleteCompleteIsland,
@@ -53,7 +62,9 @@ import {
   InquiryStatus,
   Island,
   IslandBiome,
+  IslandInvite,
   IslandShapeStyle,
+  LoanedIslandMeta,
   MuseumCategory,
   MuseumPiece,
   MuseumState,
@@ -84,6 +95,11 @@ export type EditorSource =
       onSyncMuseum: (nextMuseum: CloudMuseum, nextPieces: MuseumPiece[]) => void;
       onDeletedMuseum: (deletedMuseumId: string) => void;
       authUser?: User | null;
+      guestAccess?: {
+        inviteId: string;
+        allowedIslandId: string;
+        museumTitle: string;
+      };
     };
 
 interface MuseumEditorProps {
@@ -126,13 +142,19 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
   onClose,
 }) => {
   const isCloud = source.kind === 'cloud';
+  const esInvitado = Boolean(source.kind === 'cloud' && source.guestAccess);
+  const guestAccess = source.kind === 'cloud' ? source.guestAccess : undefined;
   const isFlagshipAdmin = source.kind === 'local' && Boolean(source.isFlagshipAdmin);
-  const canManageDonations = isCloud || isFlagshipAdmin;
-  const canManageInquiries = (isCloud && Boolean(source.authUser?.uid)) || isFlagshipAdmin;
+  const canManageDonations = (isCloud && !esInvitado) || isFlagshipAdmin;
+  const canManageInquiries = (isCloud && !esInvitado && Boolean(source.authUser?.uid)) || isFlagshipAdmin;
 
-  const visibleIslands: Island[] = isCloud
+  const allIslands: Island[] = isCloud
     ? source.museum.islands
     : getResolvedIslands(source.state, false);
+  const visibleIslands: Island[] =
+    esInvitado && guestAccess
+      ? allIslands.filter((i) => i.id === guestAccess.allowedIslandId)
+      : allIslands;
 
   const hiddenOriginals = isCloud
     ? []
@@ -170,6 +192,9 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
       : getPiecesCountForIsland(source.state, islandId);
 
   const [view, setView] = useState<EditorView>(() => {
+    if (esInvitado && guestAccess) {
+      return { mode: 'island', islandId: guestAccess.allowedIslandId };
+    }
     if (initialViewMode === 'appearance') return { mode: 'appearance' };
     if (initialViewMode === 'inquiries' && canManageInquiries) return { mode: 'inquiries' };
     return {
@@ -178,11 +203,13 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
     };
   });
   const [notice, setNotice] = useState<string>(
-    isCloud
-      ? 'Este museo se guarda en la nube y puede visitarse desde el directorio.'
-      : isFlagshipAdmin
-        ? 'Editando como curador principal de Museo 404.'
-        : 'Los cambios se guardan automáticamente en este navegador.'
+    esInvitado
+      ? 'Modo Invitado: solo puedes agregar, editar y borrar tus piezas en esta isla prestada.'
+      : isCloud
+        ? 'Este museo se guarda en la nube y puede visitarse desde el directorio.'
+        : isFlagshipAdmin
+          ? 'Editando como curador principal de Museo 404.'
+          : 'Los cambios se guardan automáticamente en este navegador.'
   );
   const [confirmState, setConfirmState] = useState<{
     message: string;
@@ -253,6 +280,21 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
   const [islBiome, setIslBiome] = useState<IslandBiome>(activeIsland?.biome || 'forest');
   const [islX, setIslX] = useState<number>(activeIsland?.x || 50);
   const [islY, setIslY] = useState<number>(activeIsland?.y || 50);
+  const [localLoanEnabled, setLocalLoanEnabled] = useState<boolean>(Boolean(activeIsland?.loaned));
+  const [localLoanMuseumTitle, setLocalLoanMuseumTitle] = useState<string>(
+    activeIsland?.loaned?.sourceMuseumTitle || ''
+  );
+  const [localLoanAuthor, setLocalLoanAuthor] = useState<string>(
+    activeIsland?.loaned?.sourceAuthorName || ''
+  );
+  const [localLoanUrl, setLocalLoanUrl] = useState<string>(
+    activeIsland?.loaned?.sourceMuseumUrl || ''
+  );
+
+  // Invitaciones mágicas de Isla Prestada (anfitrión en la nube)
+  const [islandInvites, setIslandInvites] = useState<IslandInvite[]>([]);
+  const [loadingInvites, setLoadingInvites] = useState(false);
+  const [creatingInvite, setCreatingInvite] = useState(false);
 
   const [roomName, setRoomName] = useState('');
   const [roomDesc, setRoomDesc] = useState('');
@@ -267,9 +309,48 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
   const [pieceMediumOrSize, setPieceMediumOrSize] = useState('');
   const [piecePaymentUrl, setPiecePaymentUrl] = useState('');
   const [pieceFile, setPieceFile] = useState<File | null>(null);
+  const [pieceClearMedia, setPieceClearMedia] = useState(false);
+  const [piecePreviewSrc, setPiecePreviewSrc] = useState<string | null>(null);
+  const [piecePreviewKind, setPiecePreviewKind] = useState<'image' | 'audio' | 'video' | null>(null);
+  const [piecePreviewLabel, setPiecePreviewLabel] = useState<string>('');
   const [savingPiece, setSavingPiece] = useState(false);
 
+  // Pila básica de deshacer para ediciones locales del Taller Interno
+  const [localUndoStack, setLocalUndoStack] = useState<MuseumState[]>([]);
+
+  const commitLocalState = useCallback(
+    (nextState: MuseumState) => {
+      if (source.kind !== 'local') return;
+      setLocalUndoStack((prev) => [source.state, ...prev].slice(0, 10));
+      source.onUpdateState(nextState);
+    },
+    [source]
+  );
+
+  const handleUndoLocal = useCallback(() => {
+    if (source.kind !== 'local' || localUndoStack.length === 0) return;
+    const [previous, ...rest] = localUndoStack;
+    setLocalUndoStack(rest);
+    source.onUpdateState(previous);
+    setNotice('Se deshizo el último cambio local.');
+  }, [localUndoStack, source]);
+
   const backupInputRef = useRef<HTMLInputElement | null>(null);
+
+  const loadHostInvites = useCallback(async () => {
+    if (source.kind !== 'cloud' || esInvitado) return;
+    const hostUid = source.authUser?.uid || source.museum.ownerId;
+    if (!hostUid) return;
+    setLoadingInvites(true);
+    try {
+      const list = await fetchHostInvitesForMuseum(source.museum.id, hostUid);
+      setIslandInvites(list);
+    } catch {
+      // no bloquear edición si falla lectura puntual
+    } finally {
+      setLoadingInvites(false);
+    }
+  }, [esInvitado, source]);
 
   const loadInquiriesList = useCallback(async () => {
     if (!canManageInquiries) return;
@@ -304,6 +385,94 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
     }
   }, [view.mode, loadInquiriesList]);
 
+  useEffect(() => {
+    if (source.kind === 'cloud' && !esInvitado && view.mode === 'island') {
+      loadHostInvites();
+    }
+  }, [source.kind, esInvitado, view.mode, loadHostInvites]);
+
+  useEffect(() => {
+    if (view.mode !== 'piece') {
+      setPiecePreviewSrc(null);
+      setPiecePreviewKind(null);
+      setPiecePreviewLabel('');
+      return;
+    }
+
+    let cancelled = false;
+    let revokeUrl: string | null = null;
+
+    if (pieceFile) {
+      const objectUrl = URL.createObjectURL(pieceFile);
+      revokeUrl = objectUrl;
+      const detectedKind: 'image' | 'audio' | 'video' | null = pieceFile.type.startsWith('image/')
+        ? 'image'
+        : pieceFile.type.startsWith('audio/')
+          ? 'audio'
+          : pieceFile.type.startsWith('video/')
+            ? 'video'
+            : null;
+      const sizeKb = Math.max(1, Math.round(pieceFile.size / 1024));
+      const sizeLabel = sizeKb >= 1024 ? `${(sizeKb / 1024).toFixed(1)} MB` : `${sizeKb} KB`;
+      setPiecePreviewSrc(objectUrl);
+      setPiecePreviewKind(detectedKind);
+      setPiecePreviewLabel(`${pieceFile.name} · ${sizeLabel}`);
+      return () => {
+        if (revokeUrl) URL.revokeObjectURL(revokeUrl);
+      };
+    }
+
+    if (pieceClearMedia) {
+      setPiecePreviewSrc(null);
+      setPiecePreviewKind(null);
+      setPiecePreviewLabel('');
+      return;
+    }
+
+    const existing = view.pieceId
+      ? getPieces(view.islandId, view.roomId).find((p) => p.id === view.pieceId) || null
+      : null;
+
+    if (existing?.mediaDataUrl) {
+      setPiecePreviewSrc(existing.mediaDataUrl);
+      setPiecePreviewKind('image');
+      setPiecePreviewLabel('Imagen actual guardada en la nube');
+      return;
+    }
+
+    if (existing?.mediaKey) {
+      getMedia(existing.mediaKey).then((blob) => {
+        if (cancelled) return;
+        if (!blob) {
+          setPiecePreviewSrc(null);
+          setPiecePreviewKind(null);
+          setPiecePreviewLabel('');
+          return;
+        }
+        const objectUrl = URL.createObjectURL(blob);
+        revokeUrl = objectUrl;
+        const blobKind: 'image' | 'audio' | 'video' | null = blob.type.startsWith('audio/')
+          ? 'audio'
+          : blob.type.startsWith('video/')
+            ? 'video'
+            : 'image';
+        setPiecePreviewSrc(objectUrl);
+        setPiecePreviewKind(blobKind);
+        setPiecePreviewLabel('Archivo actual guardado en este navegador');
+      });
+      return () => {
+        cancelled = true;
+        if (revokeUrl) URL.revokeObjectURL(revokeUrl);
+      };
+    }
+
+    setPiecePreviewSrc(null);
+    setPiecePreviewKind(null);
+    setPiecePreviewLabel('');
+    return undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, pieceFile, pieceClearMedia]);
+
   const selectIsland = (islandId: string) => {
     const found = visibleIslands.find((i) => i.id === islandId);
     if (!found) return;
@@ -315,6 +484,10 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
     setIslBiome(found.biome);
     setIslX(found.x);
     setIslY(found.y);
+    setLocalLoanEnabled(Boolean(found.loaned));
+    setLocalLoanMuseumTitle(found.loaned?.sourceMuseumTitle || '');
+    setLocalLoanAuthor(found.loaned?.sourceAuthorName || '');
+    setLocalLoanUrl(found.loaned?.sourceMuseumUrl || '');
     setShowNewRoomForm(false);
     setView({ mode: 'island', islandId });
   };
@@ -354,6 +527,7 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
     setPieceMediumOrSize(existing?.mediumOrSize || '');
     setPiecePaymentUrl(existing?.paymentUrl || '');
     setPieceFile(null);
+    setPieceClearMedia(false);
     setView({ mode: 'piece', islandId, roomId, pieceId });
   };
 
@@ -460,7 +634,31 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
 
   const handleSaveIsland = async () => {
     if (!activeIsland) return;
-    const updatedMeta = {
+    if (source.kind === 'local' && localLoanEnabled) {
+      if (!localLoanMuseumTitle.trim()) {
+        setNotice('Escribe el nombre del museo de origen para la Isla Prestada.');
+        return;
+      }
+      if (!isValidSourceMuseumUrl(localLoanUrl)) {
+        setNotice('El enlace de origen debe comenzar con https://, http:// o ?museum=ID.');
+        return;
+      }
+    }
+
+    const nextLoaned: LoanedIslandMeta | undefined =
+      source.kind === 'local' && localLoanEnabled
+        ? {
+            loanId: activeIsland.loaned?.loanId || makeId('loan'),
+            sourceMuseumId: activeIsland.loaned?.sourceMuseumId || '',
+            sourceMuseumTitle: localLoanMuseumTitle.trim(),
+            sourceAuthorName: localLoanAuthor.trim() || undefined,
+            sourceMuseumUrl: localLoanUrl.trim(),
+            sourceIslandId: activeIsland.id,
+            loanedAt: activeIsland.loaned?.loanedAt || new Date().toISOString(),
+          }
+        : undefined;
+
+    const updatedMeta: Partial<Island> = {
       mapLabel: islLabel.trim() || activeIsland.mapLabel,
       title: islTitle.trim() || activeIsland.title,
       eyebrow: islEyebrow.trim(),
@@ -469,22 +667,38 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
       biome: islBiome,
       x: Math.max(10, Math.min(90, Number(islX) || activeIsland.x)),
       y: Math.max(18, Math.min(86, Number(islY) || activeIsland.y)),
+      loaned: nextLoaned,
     };
 
     if (source.kind === 'local') {
-      const nextState: MuseumState = {
-        ...source.state,
-        customIslands: activeIsland.isOriginal
-          ? source.state.customIslands
-          : source.state.customIslands.map((ci) =>
-              ci.id === activeIsland.id ? { ...ci, ...updatedMeta } : ci
-            ),
-        islandMeta: {
-          ...source.state.islandMeta,
-          [activeIsland.id]: updatedMeta,
-        },
+      const nextCustomIslands = activeIsland.isOriginal
+        ? source.state.customIslands
+        : source.state.customIslands.map((ci) => {
+            if (ci.id !== activeIsland.id) return ci;
+            const merged = { ...ci, ...updatedMeta };
+            if (!nextLoaned) delete merged.loaned;
+            return merged;
+          });
+      const nextIslandMeta = {
+        ...source.state.islandMeta,
+        [activeIsland.id]: updatedMeta,
       };
-      source.onUpdateState(nextState);
+      if (!nextLoaned) {
+        delete nextIslandMeta[activeIsland.id].loaned;
+      }
+      const nextStateDraft: MuseumState = {
+        ...source.state,
+        customIslands: nextCustomIslands,
+        islandMeta: nextIslandMeta,
+      };
+      const resolvedLoaned = getResolvedIslands(nextStateDraft, false)
+        .map((isl) => isl.loaned)
+        .filter((l): l is LoanedIslandMeta => Boolean(l));
+
+      commitLocalState({
+        ...nextStateDraft,
+        islasPrestadas: resolvedLoaned,
+      });
       setNotice(`Isla «${updatedMeta.title}» actualizada.`);
     } else {
       try {
@@ -522,7 +736,7 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
         x: newIslX,
         y: newIslY,
       });
-      source.onUpdateState(nextState);
+      commitLocalState(nextState);
       setNotice(`Isla «${newIsland.title}» creada en el archipiélago.`);
 
       setNewIslTitle('');
@@ -615,7 +829,7 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
       onConfirm: async () => {
         if (source.kind === 'local') {
           const nextState = await deleteCompleteIsland(source.state, islandId);
-          source.onUpdateState(nextState);
+          commitLocalState(nextState);
           const remaining = getResolvedIslands(nextState, false);
           const nextFirst = remaining[0];
           if (nextFirst) {
@@ -680,7 +894,7 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
       ...source.state,
       hiddenIslands: source.state.hiddenIslands.filter((id) => id !== islandId),
     };
-    source.onUpdateState(nextState);
+    commitLocalState(nextState);
     setNotice('Isla original restaurada en el archipiélago.');
   };
 
@@ -707,7 +921,7 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
           [activeIsland.id]: [...getRoomsForIsland(source.state, activeIsland.id), newRoom],
         },
       };
-      source.onUpdateState(nextState);
+      commitLocalState(nextState);
       setCreatingRoomName('');
       setShowNewRoomForm(false);
       setNotice(`Sala «${trimmed}» creada.`);
@@ -771,7 +985,7 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
             hidden: nextHidden,
             overrides: nextOverrides,
           };
-          source.onUpdateState(nextState);
+          commitLocalState(nextState);
           setView({ mode: 'island', islandId });
           setNotice('Sala eliminada.');
           return;
@@ -812,7 +1026,7 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
           ? { ...r, name: roomName.trim() || r.name, description: roomDesc }
           : r
       );
-      source.onUpdateState({
+      commitLocalState({
         ...source.state,
         rooms: { ...source.state.rooms, [view.islandId]: rooms },
       });
@@ -866,6 +1080,13 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
         const isCustom = existing ? Boolean(existing.custom) : true;
         let mediaKey = existing?.mediaKey || null;
 
+        if (pieceClearMedia && !pieceFile) {
+          if (existing?.mediaKey) {
+            await deleteMedia(existing.mediaKey);
+          }
+          mediaKey = null;
+        }
+
         if (pieceFile) {
           const nextMediaKey = makeId('media');
           const uploadBlob =
@@ -913,9 +1134,9 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
             ? source.state.customItems.map((i) => (i.id === existing.id ? newPiece : i))
             : [...source.state.customItems, newPiece];
 
-          source.onUpdateState({ ...source.state, customItems: nextCustomItems });
+          commitLocalState({ ...source.state, customItems: nextCustomItems });
         } else if (existing) {
-          source.onUpdateState({
+          commitLocalState({
             ...source.state,
             overrides: {
               ...source.state.overrides,
@@ -924,7 +1145,7 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
                 title,
                 subtitle: pieceSubtitle.trim(),
                 body: pieceBody,
-                ...(pieceFile ? { type: pieceType, mediaKey } : {}),
+                ...(pieceFile || pieceClearMedia ? { type: pieceType, mediaKey } : {}),
                 saleStatus: pieceSaleStatus,
                 priceLabel: cleanPriceLabel,
                 mediumOrSize: cleanMediumOrSize,
@@ -961,7 +1182,7 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
       }
 
       // Modo nube (Firestore)
-      let mediaDataUrl = existing?.mediaDataUrl || '';
+      let mediaDataUrl = pieceClearMedia ? '' : existing?.mediaDataUrl || '';
       if (pieceFile) {
         if (!pieceFile.type.startsWith('image/')) {
           setNotice(
@@ -972,6 +1193,9 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
         }
         mediaDataUrl = await compactImageToDataUrl(pieceFile, 155000);
       }
+
+      const effectiveLoanInviteId =
+        esInvitado && guestAccess ? guestAccess.inviteId : existing?.loanInviteId;
 
       const { piece: savedPiece, nextPieceCount } = await saveCloudPiece(
         source.museum,
@@ -986,6 +1210,7 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
           url: pieceUrl.trim(),
           mediaDataUrl,
           curatedFrom: existing?.curatedFrom,
+          ...(effectiveLoanInviteId ? { loanInviteId: effectiveLoanInviteId } : {}),
           saleStatus: pieceSaleStatus,
           priceLabel: cleanPriceLabel,
           mediumOrSize: cleanMediumOrSize,
@@ -1021,14 +1246,14 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
         if (source.kind === 'local') {
           if (piece.mediaKey) await deleteMedia(piece.mediaKey);
           if (piece.custom) {
-            source.onUpdateState({
+            commitLocalState({
               ...source.state,
               customItems: source.state.customItems.filter((i) => i.id !== piece.id),
             });
           } else {
             const nextOverrides = { ...source.state.overrides };
             delete nextOverrides[piece.id];
-            source.onUpdateState({
+            commitLocalState({
               ...source.state,
               hidden: Array.from(new Set([...source.state.hidden, piece.id])),
               overrides: nextOverrides,
@@ -1041,7 +1266,8 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
         const nextPieceCount = await deleteCloudPiece(
           source.museum.id,
           piece.id,
-          source.pieces.length
+          source.pieces.length,
+          !esInvitado
         );
         const nextPieces = source.pieces.filter((p) => p.id !== piece.id);
         source.onSyncMuseum({ ...source.museum, pieceCount: nextPieceCount }, nextPieces);
@@ -1055,7 +1281,7 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
     const baseInRoom = getBasePiecesForIsland(islandId)
       .filter((p) => p.roomId === roomId)
       .map((p) => p.id);
-    source.onUpdateState({
+    commitLocalState({
       ...source.state,
       hidden: source.state.hidden.filter((id) => !baseInRoom.includes(id)),
     });
@@ -1074,11 +1300,19 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
         <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[#f3d889]/30 bg-gradient-to-r from-[#164e59] to-[#092b3b] px-5 py-4">
           <div>
             <p className="font-pixel text-[9px] text-[#f4d47d]">
-              {isCloud ? `${source.museum.title.toUpperCase()} · EN LA NUBE` : 'MUSEO 404 · TALLER INTERNO'}
+              {source.kind === 'cloud'
+                ? esInvitado
+                  ? `${source.museum.title.toUpperCase()} · ISLA PRESTADA (INVITADO)`
+                  : `${source.museum.title.toUpperCase()} · EN LA NUBE`
+                : 'MUSEO 404 · TALLER INTERNO'}
             </p>
-            <h2 className="mt-1.5 text-2xl font-bold text-[#fff9e8]">Editor del museo</h2>
+            <h2 className="mt-1.5 text-2xl font-bold text-[#fff9e8]">
+              {esInvitado ? 'Tu isla prestada' : 'Editor del museo'}
+            </h2>
             <p className="text-sm text-[#c4ded2]">
-              Personaliza colores, crea islas y salas, y sube obras, cartas de menú o recomendaciones.
+              {esInvitado
+                ? 'Sube y gestiona tus obras en esta isla prestada. El resto del museo permanece en modo solo lectura.'
+                : 'Personaliza colores, crea islas y salas, presta espacios a otros creadores y sube obras.'}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1086,11 +1320,21 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
               <>
                 <button
                   type="button"
+                  disabled={localUndoStack.length === 0}
+                  onClick={handleUndoLocal}
+                  title="Deshacer el último cambio local"
+                  className="inline-flex min-h-[38px] items-center gap-1.5 border border-[#d8c47b] bg-[#062230] px-3 py-2 text-xs font-semibold text-[#fff5d7] hover:bg-[#174d58] disabled:opacity-45 tabular-nums"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Deshacer{localUndoStack.length > 0 ? ` (${localUndoStack.length})` : ''}
+                </button>
+                <button
+                  type="button"
                   onClick={async () => {
                     await exportMuseumBackup(source.state);
                     setNotice('Copia de seguridad exportada.');
                   }}
-                  className="inline-flex items-center gap-1.5 border border-[#d8c47b] bg-[#062230] px-3 py-2 text-xs font-semibold text-[#fff5d7] hover:bg-[#174d58]"
+                  className="inline-flex min-h-[38px] items-center gap-1.5 border border-[#d8c47b] bg-[#062230] px-3 py-2 text-xs font-semibold text-[#fff5d7] hover:bg-[#174d58]"
                 >
                   <Download className="h-3.5 w-3.5" />
                   Exportar copia
@@ -1146,20 +1390,22 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
             aria-label="Islas del museo"
             className="museum-scroll flex flex-row gap-2 overflow-x-auto border-b border-[#f3d889]/20 bg-[#082532] p-3 md:flex-col md:overflow-y-auto md:border-b-0 md:border-r"
           >
-            <button
-              type="button"
-              onClick={() => setView({ mode: 'appearance' })}
-              className={`flex shrink-0 items-center justify-center gap-2 border px-3 py-2.5 text-sm font-bold transition-colors ${
-                view.mode === 'appearance'
-                  ? 'border-[#f1d17c] bg-[#1d6873] text-[#fff9e8]'
-                  : 'border-[#f1d17c]/45 bg-[#0f3644] text-[#f4d47d] hover:bg-[#174d58]'
-              }`}
-            >
-              <Palette className="h-4 w-4" />
-              <span>Colores y diseño</span>
-            </button>
+            {!esInvitado && (
+              <button
+                type="button"
+                onClick={() => setView({ mode: 'appearance' })}
+                className={`flex shrink-0 items-center justify-center gap-2 border px-3 py-2.5 text-sm font-bold transition-colors ${
+                  view.mode === 'appearance'
+                    ? 'border-[#f1d17c] bg-[#1d6873] text-[#fff9e8]'
+                    : 'border-[#f1d17c]/45 bg-[#0f3644] text-[#f4d47d] hover:bg-[#174d58]'
+                }`}
+              >
+                <Palette className="h-4 w-4" />
+                <span>Colores y diseño</span>
+              </button>
+            )}
 
-            {canManageInquiries && (
+            {canManageInquiries && !esInvitado && (
               <button
                 type="button"
                 onClick={() => setView({ mode: 'inquiries' })}
@@ -1174,23 +1420,25 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
               </button>
             )}
 
-            <button
-              type="button"
-              onClick={() => {
-                const nextPos = suggestIslandPosition(visibleIslands);
-                setNewIslX(nextPos.x);
-                setNewIslY(nextPos.y);
-                setView({ mode: 'new-island' });
-              }}
-              className={`flex shrink-0 items-center justify-center gap-2 border border-dashed px-3 py-2.5 text-sm font-bold transition-colors ${
-                view.mode === 'new-island'
-                  ? 'border-[#f1d17c] bg-[#bd7544] text-[#fff9e8]'
-                  : 'border-[#f1d17c]/70 bg-[#174d58]/50 text-[#f4d47d] hover:bg-[#174d58]'
-              }`}
-            >
-              <Plus className="h-4 w-4" />
-              <span>Nueva isla</span>
-            </button>
+            {!esInvitado && (
+              <button
+                type="button"
+                onClick={() => {
+                  const nextPos = suggestIslandPosition(visibleIslands);
+                  setNewIslX(nextPos.x);
+                  setNewIslY(nextPos.y);
+                  setView({ mode: 'new-island' });
+                }}
+                className={`flex shrink-0 items-center justify-center gap-2 border border-dashed px-3 py-2.5 text-sm font-bold transition-colors ${
+                  view.mode === 'new-island'
+                    ? 'border-[#f1d17c] bg-[#bd7544] text-[#fff9e8]'
+                    : 'border-[#f1d17c]/70 bg-[#174d58]/50 text-[#f4d47d] hover:bg-[#174d58]'
+                }`}
+              >
+                <Plus className="h-4 w-4" />
+                <span>Nueva isla</span>
+              </button>
+            )}
 
             {visibleIslands.map((isl) => {
               const isSelected =
@@ -1810,113 +2058,350 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
 
             {view.mode === 'island' && activeIsland && (
               <div>
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="font-pixel text-[10px] leading-relaxed text-[#f4d47d]">
-                    CONFIGURAR ISLA
-                  </h3>
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteIsland(activeIsland.id)}
-                    className="inline-flex items-center gap-1.5 border border-[#bd7967] bg-[#603d3d] px-3 py-1.5 text-xs text-[#ffd5c7] hover:bg-[#7b4949]"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    {activeIsland.isOriginal ? 'Quitar del mapa' : 'Eliminar isla'}
-                  </button>
-                </div>
+                {esInvitado ? (
+                  <div className="mb-5 border-2 border-[#7fd6cc]/60 bg-[#07222d] p-4">
+                    <p className="font-pixel flex items-center gap-2 text-[9px] text-[#7fd6cc]">
+                      <Sparkles className="h-3.5 w-3.5" />
+                      <span>ISLA PRESTADA · MODO INVITADO</span>
+                    </p>
+                    <h3 className="mt-2 text-xl font-bold text-[#fff9e8]">{activeIsland.title}</h3>
+                    <p className="mt-1 text-sm text-[#c4ded2]">
+                      El anfitrión te prestó esta isla para mostrar tu obra. Abre cualquier sala de abajo para cargar, editar o eliminar tus piezas. La arquitectura, colores y el resto del museo están protegidos en solo lectura.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="font-pixel text-[10px] leading-relaxed text-[#f4d47d]">
+                        CONFIGURAR ISLA
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteIsland(activeIsland.id)}
+                        className="inline-flex items-center gap-1.5 border border-[#bd7967] bg-[#603d3d] px-3 py-1.5 text-xs text-[#ffd5c7] hover:bg-[#7b4949]"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        {activeIsland.isOriginal ? 'Quitar del mapa' : 'Eliminar isla'}
+                      </button>
+                    </div>
 
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1.5 block text-xs text-[#c7ded2]">
-                      Nombre visible en el mapa
-                    </label>
-                    <input
-                      value={islLabel}
-                      onChange={(e) => setIslLabel(e.target.value)}
-                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-xs text-[#c7ded2]">Nombre de la isla</label>
-                    <input
-                      value={islTitle}
-                      onChange={(e) => setIslTitle(e.target.value)}
-                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-xs text-[#c7ded2]">Bioma visual</label>
-                    <select
-                      value={islBiome}
-                      onChange={(e) => setIslBiome(e.target.value as IslandBiome)}
-                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
-                    >
-                      {Object.entries(BIOME_LABELS).map(([key, val]) => (
-                        <option key={key} value={key}>
-                          {val.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-xs text-[#c7ded2]">Rótulo superior</label>
-                    <input
-                      value={islEyebrow}
-                      onChange={(e) => setIslEyebrow(e.target.value)}
-                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
-                    />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="mb-1.5 block text-xs text-[#c7ded2]">
-                      Descripción de la isla
-                    </label>
-                    <textarea
-                      rows={3}
-                      value={islDesc}
-                      onChange={(e) => setIslDesc(e.target.value)}
-                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-xs text-[#c7ded2]">
-                      Posición X ({islX}%)
-                    </label>
-                    <input
-                      type="range"
-                      min={10}
-                      max={90}
-                      step={0.5}
-                      value={islX}
-                      onChange={(e) => setIslX(Number(e.target.value))}
-                      className="w-full accent-[#e1c875]"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-xs text-[#c7ded2]">
-                      Posición Y ({islY}%)
-                    </label>
-                    <input
-                      type="range"
-                      min={18}
-                      max={86}
-                      step={0.5}
-                      value={islY}
-                      onChange={(e) => setIslY(Number(e.target.value))}
-                      className="w-full accent-[#e1c875]"
-                    />
-                  </div>
-                </div>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                          Nombre visible en el mapa
+                        </label>
+                        <input
+                          value={islLabel}
+                          onChange={(e) => setIslLabel(e.target.value)}
+                          className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-xs text-[#c7ded2]">Nombre de la isla</label>
+                        <input
+                          value={islTitle}
+                          onChange={(e) => setIslTitle(e.target.value)}
+                          className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-xs text-[#c7ded2]">Bioma visual</label>
+                        <select
+                          value={islBiome}
+                          onChange={(e) => setIslBiome(e.target.value as IslandBiome)}
+                          className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                        >
+                          {Object.entries(BIOME_LABELS).map(([key, val]) => (
+                            <option key={key} value={key}>
+                              {val.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-xs text-[#c7ded2]">Rótulo superior</label>
+                        <input
+                          value={islEyebrow}
+                          onChange={(e) => setIslEyebrow(e.target.value)}
+                          className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                          Descripción de la isla
+                        </label>
+                        <textarea
+                          rows={3}
+                          value={islDesc}
+                          onChange={(e) => setIslDesc(e.target.value)}
+                          className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                          Posición X ({islX}%)
+                        </label>
+                        <input
+                          type="range"
+                          min={10}
+                          max={90}
+                          step={0.5}
+                          value={islX}
+                          onChange={(e) => setIslX(Number(e.target.value))}
+                          className="w-full accent-[#e1c875]"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                          Posición Y ({islY}%)
+                        </label>
+                        <input
+                          type="range"
+                          min={18}
+                          max={86}
+                          step={0.5}
+                          value={islY}
+                          onChange={(e) => setIslY(Number(e.target.value))}
+                          className="w-full accent-[#e1c875]"
+                        />
+                      </div>
+                    </div>
 
-                <div className="mt-4">
-                  <button
-                    type="button"
-                    onClick={handleSaveIsland}
-                    className="border border-[#f2d17b] bg-[#bd7544] px-4 py-2 text-sm font-semibold text-[#fff9e8] hover:bg-[#a24d2e]"
-                  >
-                    Guardar cambios de isla
-                  </button>
-                </div>
+                    {source.kind === 'local' && (
+                      <div className="mt-4 border border-[#7fd6cc]/35 bg-[#07222d] p-4 space-y-3">
+                        <label className="flex items-center gap-2.5 text-sm font-semibold text-[#e1f4e9]">
+                          <input
+                            type="checkbox"
+                            checked={localLoanEnabled}
+                            onChange={(e) => setLocalLoanEnabled(e.target.checked)}
+                            className="h-4 w-4 accent-[#7fd6cc]"
+                          />
+                          <span>Marcar como Isla Prestada (niebla liminal + enlace al museo origen)</span>
+                        </label>
+                        {localLoanEnabled && (
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                            <div>
+                              <label className="mb-1 block text-xs text-[#c7ded2]">
+                                Nombre del museo de origen *
+                              </label>
+                              <input
+                                value={localLoanMuseumTitle}
+                                onChange={(e) => setLocalLoanMuseumTitle(e.target.value)}
+                                placeholder="Ej. Archivo Sonoro Sur"
+                                className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-1.5 text-sm text-[#183b42]"
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs text-[#c7ded2]">
+                                Creador / invitado
+                              </label>
+                              <input
+                                value={localLoanAuthor}
+                                onChange={(e) => setLocalLoanAuthor(e.target.value)}
+                                placeholder="Ej. Lucía M."
+                                className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-1.5 text-sm text-[#183b42]"
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs text-[#c7ded2]">
+                                Enlace del museo origen
+                              </label>
+                              <input
+                                value={localLoanUrl}
+                                onChange={(e) => setLocalLoanUrl(e.target.value)}
+                                placeholder="?museum=... o https://..."
+                                className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-1.5 text-sm text-[#183b42]"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
-                <hr className="my-6 border-[#f3d889]/20" />
+                    <div className="mt-4">
+                      <button
+                        type="button"
+                        onClick={handleSaveIsland}
+                        className="border border-[#f2d17b] bg-[#bd7544] px-4 py-2 text-sm font-semibold text-[#fff9e8] hover:bg-[#a24d2e]"
+                      >
+                        Guardar cambios de isla
+                      </button>
+                    </div>
+
+                    {/* Sección Anfitrión en la Nube: Prestar esta isla (invitación mágica) */}
+                    {isCloud && (
+                      <div className="mt-6 border border-[#7fd6cc]/40 bg-[#07222d] p-4 space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <h4 className="font-pixel flex items-center gap-2 text-[10px] text-[#7fd6cc]">
+                              <Sparkles className="h-3.5 w-3.5" />
+                              <span>PRESTAR ESTA ISLA (ISLA PRESTADA)</span>
+                            </h4>
+                            <p className="mt-1 text-xs text-[#b9d6cc]">
+                              Genera un enlace mágico para invitar a otro creador a montar su exposición aquí, con niebla liminal y enlace permanente a su museo origen.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={creatingInvite || !source.authUser}
+                            onClick={async () => {
+                              if (!source.authUser) {
+                                setNotice('Inicia sesión para generar invitaciones.');
+                                return;
+                              }
+                              setCreatingInvite(true);
+                              try {
+                                const created = await createIslandInvite({
+                                  museum: source.museum,
+                                  island: activeIsland,
+                                  hostUser: source.authUser,
+                                });
+                                setIslandInvites((prev) => [created, ...prev]);
+                                setNotice(`Invitación mágica generada para «${activeIsland.title}».`);
+                              } catch (err) {
+                                setNotice(
+                                  err instanceof Error ? err.message : 'No se pudo generar la invitación.'
+                                );
+                              } finally {
+                                setCreatingInvite(false);
+                              }
+                            }}
+                            className="inline-flex items-center gap-1.5 border border-[#f2d17b] bg-[#1d6873] px-3 py-2 text-xs font-bold text-[#fff9e8] hover:bg-[#b25f37] disabled:opacity-55"
+                          >
+                            <KeyRound className="h-3.5 w-3.5 text-[#f4d47d]" />
+                            <span>{creatingInvite ? 'Generando...' : 'Generar invitación mágica'}</span>
+                          </button>
+                        </div>
+
+                        {loadingInvites ? (
+                          <p className="text-xs text-[#9fc4b8]">Consultando invitaciones...</p>
+                        ) : (
+                          (() => {
+                            const forThisIsland = islandInvites.filter(
+                              (inv) => inv.islandId === activeIsland.id
+                            );
+                            if (forThisIsland.length === 0) {
+                              return (
+                                <p className="text-xs text-[#9fc4b8]">
+                                  Aún no hay invitaciones generadas para esta isla.
+                                </p>
+                              );
+                            }
+                            return (
+                              <div className="space-y-2">
+                                {forThisIsland.map((inv) => {
+                                  const magicUrl = `${window.location.origin}${window.location.pathname}?museum=${encodeURIComponent(source.museum.id)}&invite=${encodeURIComponent(inv.id)}`;
+                                  return (
+                                    <div
+                                      key={inv.id}
+                                      className="flex flex-wrap items-center justify-between gap-2 border border-white/15 bg-white/[0.04] px-3 py-2.5 text-xs"
+                                    >
+                                      <div className="min-w-0 flex-1 space-y-1">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <span
+                                            className={`border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                                              inv.status === 'pending'
+                                                ? 'border-[#f4d47d] bg-[#6d451f] text-[#fff3c7]'
+                                                : inv.status === 'accepted'
+                                                  ? 'border-[#7fd6cc] bg-[#144c58] text-[#e7fbf7]'
+                                                  : 'border-[#bd7967] bg-[#533b3a] text-[#ffd5c7]'
+                                            }`}
+                                          >
+                                            {inv.status === 'pending'
+                                              ? 'Pendiente'
+                                              : inv.status === 'accepted'
+                                                ? 'Prestada'
+                                                : 'Revocada'}
+                                          </span>
+                                          <code className="bg-black/30 px-1.5 py-0.5 text-[#f4d47d]">
+                                            {inv.id}
+                                          </code>
+                                          {inv.status === 'accepted' && (
+                                            <span className="text-[#e1f4e9]">
+                                              → <strong>{inv.guestName}</strong> ({inv.sourceMuseumTitle})
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      <div className="flex flex-wrap items-center gap-1.5">
+                                        {inv.status === 'pending' && (
+                                          <button
+                                            type="button"
+                                            onClick={async () => {
+                                              try {
+                                                await navigator.clipboard?.writeText(magicUrl);
+                                                setNotice('Enlace mágico copiado al portapapeles.');
+                                              } catch {
+                                                setNotice(`Enlace: ${magicUrl}`);
+                                              }
+                                            }}
+                                            className="inline-flex items-center gap-1 border border-[#7fd6cc]/60 bg-[#0d3a46] px-2.5 py-1 text-xs text-[#e7fbf7] hover:bg-[#175b6e]"
+                                          >
+                                            <Copy className="h-3 w-3" />
+                                            <span>Copiar enlace</span>
+                                          </button>
+                                        )}
+                                        {inv.status !== 'revoked' && (
+                                          <button
+                                            type="button"
+                                            onClick={async () => {
+                                              try {
+                                                await revokeIslandInvite(inv.id);
+                                                setIslandInvites((prev) =>
+                                                  prev.map((it) =>
+                                                    it.id === inv.id ? { ...it, status: 'revoked' } : it
+                                                  )
+                                                );
+                                                setNotice('Préstamo revocado.');
+                                              } catch (err) {
+                                                setNotice(
+                                                  err instanceof Error
+                                                    ? err.message
+                                                    : 'No se pudo revocar.'
+                                                );
+                                              }
+                                            }}
+                                            className="border border-[#d8c47b]/50 bg-[#062230] px-2.5 py-1 text-xs text-[#f4d47d] hover:bg-[#4b3527]"
+                                          >
+                                            Revocar
+                                          </button>
+                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={async () => {
+                                            try {
+                                              await deleteIslandInvite(inv.id);
+                                              setIslandInvites((prev) =>
+                                                prev.filter((it) => it.id !== inv.id)
+                                              );
+                                              setNotice('Invitación eliminada.');
+                                            } catch (err) {
+                                              setNotice(
+                                                err instanceof Error
+                                                  ? err.message
+                                                  : 'No se pudo eliminar.'
+                                              );
+                                            }
+                                          }}
+                                          className="border border-[#bd7967] bg-[#533b3a] px-2 py-1 text-xs text-[#ffd5c7] hover:bg-[#6a4846]"
+                                        >
+                                          Eliminar
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })()
+                        )}
+                      </div>
+                    )}
+
+                    <hr className="my-6 border-[#f3d889]/20" />
+                  </>
+                )}
 
                 <h3 className="font-pixel mb-2 text-[10px] leading-relaxed text-[#f4d47d]">
                   SALAS DE ESTA ISLA
@@ -1947,7 +2432,7 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
                         >
                           Abrir sala
                         </button>
-                        {getRooms(activeIsland.id).length > 1 && (
+                        {!esInvitado && getRooms(activeIsland.id).length > 1 && (
                           <button
                             type="button"
                             onClick={() => handleDeleteRoom(activeIsland.id, room.id)}
@@ -1961,38 +2446,40 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
                   ))}
                 </div>
 
-                {showNewRoomForm ? (
-                  <div className="mt-4 flex flex-wrap items-center gap-2 border border-[#e1c875]/40 bg-[#062230] p-3">
-                    <input
-                      value={creatingRoomName}
-                      onChange={(e) => setCreatingRoomName(e.target.value)}
-                      placeholder="Nombre de la nueva sala..."
-                      className="min-w-[220px] flex-1 border border-[#537c79] bg-[#f0eedc] px-3 py-1.5 text-sm text-[#183b42]"
-                    />
+                {!esInvitado && (
+                  showNewRoomForm ? (
+                    <div className="mt-4 flex flex-wrap items-center gap-2 border border-[#e1c875]/40 bg-[#062230] p-3">
+                      <input
+                        value={creatingRoomName}
+                        onChange={(e) => setCreatingRoomName(e.target.value)}
+                        placeholder="Nombre de la nueva sala..."
+                        className="min-w-[220px] flex-1 border border-[#537c79] bg-[#f0eedc] px-3 py-1.5 text-sm text-[#183b42]"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleCreateRoom}
+                        className="border border-[#f2d17b] bg-[#bd7544] px-3 py-1.5 text-xs font-semibold text-[#fff9e8]"
+                      >
+                        Crear sala
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowNewRoomForm(false)}
+                        className="border border-white/30 bg-transparent px-3 py-1.5 text-xs text-[#d0e6da]"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  ) : (
                     <button
                       type="button"
-                      onClick={handleCreateRoom}
-                      className="border border-[#f2d17b] bg-[#bd7544] px-3 py-1.5 text-xs font-semibold text-[#fff9e8]"
+                      onClick={() => setShowNewRoomForm(true)}
+                      className="mt-4 inline-flex items-center gap-1.5 border border-[#f2d17b] bg-[#bd7544] px-4 py-2 text-sm font-semibold text-[#fff9e8] hover:bg-[#a24d2e]"
                     >
+                      <Plus className="h-4 w-4" />
                       Crear sala
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowNewRoomForm(false)}
-                      className="border border-white/30 bg-transparent px-3 py-1.5 text-xs text-[#d0e6da]"
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setShowNewRoomForm(true)}
-                    className="mt-4 inline-flex items-center gap-1.5 border border-[#f2d17b] bg-[#bd7544] px-4 py-2 text-sm font-semibold text-[#fff9e8] hover:bg-[#a24d2e]"
-                  >
-                    <Plus className="h-4 w-4" />
-                    Crear sala
-                  </button>
+                  )
                 )}
               </div>
             )}
@@ -2008,35 +2495,45 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
                   Volver a la isla
                 </button>
 
-                <h3 className="font-pixel mt-5 mb-3 text-[10px] text-[#f4d47d]">EDITAR SALA</h3>
-                <div className="space-y-3">
-                  <div>
-                    <label className="mb-1.5 block text-xs text-[#c7ded2]">Nombre de la sala</label>
-                    <input
-                      value={roomName}
-                      onChange={(e) => setRoomName(e.target.value)}
-                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
-                    />
+                {esInvitado ? (
+                  <div className="mt-4 border border-[#7fd6cc]/40 bg-[#07222d] p-4">
+                    <p className="font-pixel text-[9px] text-[#7fd6cc]">SALA DE EXHIBICIÓN</p>
+                    <h3 className="mt-1 text-xl font-bold text-[#fff9e8]">{roomName}</h3>
+                    {roomDesc && <p className="mt-1 text-sm text-[#c4ded2]">{roomDesc}</p>}
                   </div>
-                  <div>
-                    <label className="mb-1.5 block text-xs text-[#c7ded2]">
-                      Descripción de la sala
-                    </label>
-                    <textarea
-                      rows={3}
-                      value={roomDesc}
-                      onChange={(e) => setRoomDesc(e.target.value)}
-                      className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleSaveRoom}
-                    className="border border-[#f2d17b] bg-[#bd7544] px-4 py-2 text-sm font-semibold text-[#fff9e8] hover:bg-[#a24d2e]"
-                  >
-                    Guardar sala
-                  </button>
-                </div>
+                ) : (
+                  <>
+                    <h3 className="font-pixel mt-5 mb-3 text-[10px] text-[#f4d47d]">EDITAR SALA</h3>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="mb-1.5 block text-xs text-[#c7ded2]">Nombre de la sala</label>
+                        <input
+                          value={roomName}
+                          onChange={(e) => setRoomName(e.target.value)}
+                          className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-xs text-[#c7ded2]">
+                          Descripción de la sala
+                        </label>
+                        <textarea
+                          rows={3}
+                          value={roomDesc}
+                          onChange={(e) => setRoomDesc(e.target.value)}
+                          className="w-full border border-[#537c79] bg-[#f0eedc] px-3 py-2 text-[#183b42]"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleSaveRoom}
+                        className="border border-[#f2d17b] bg-[#bd7544] px-4 py-2 text-sm font-semibold text-[#fff9e8] hover:bg-[#a24d2e]"
+                      >
+                        Guardar sala
+                      </button>
+                    </div>
+                  </>
+                )}
 
                 <hr className="my-6 border-[#f3d889]/20" />
 
@@ -2053,65 +2550,83 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
                 </div>
 
                 <div className="space-y-2">
-                  {getPieces(view.islandId, view.roomId).map((item) => (
-                    <div
-                      key={item.id}
-                      className="flex flex-wrap items-center justify-between gap-3 border border-[#e0d7a5]/20 bg-white/[0.045] px-4 py-2.5"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <strong className="truncate text-base font-semibold text-[#fff9e8]">
-                            {item.title}
-                          </strong>
-                          {item.saleStatus && item.saleStatus !== 'not_for_sale' && (
-                            <span
-                              className={`border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider tabular-nums ${
-                                item.saleStatus === 'for_sale'
-                                  ? 'border-[#72c6c1] bg-[#174653] text-[#e7fbf7]'
+                  {getPieces(view.islandId, view.roomId).map((item) => {
+                    const canModifyPiece =
+                      !esInvitado || Boolean(guestAccess && item.loanInviteId === guestAccess.inviteId);
+                    return (
+                      <div
+                        key={item.id}
+                        className="flex flex-wrap items-center justify-between gap-3 border border-[#e0d7a5]/20 bg-white/[0.045] px-4 py-2.5"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <strong className="truncate text-base font-semibold text-[#fff9e8]">
+                              {item.title}
+                            </strong>
+                            {item.loanInviteId && (
+                              <span className="inline-flex items-center gap-1 border border-[#7fd6cc]/60 bg-[#0d3a46] px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#b7f2eb]">
+                                <Link2 className="h-2.5 w-2.5" />
+                                Invitado
+                              </span>
+                            )}
+                            {item.saleStatus && item.saleStatus !== 'not_for_sale' && (
+                              <span
+                                className={`border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider tabular-nums ${
+                                  item.saleStatus === 'for_sale'
+                                    ? 'border-[#72c6c1] bg-[#174653] text-[#e7fbf7]'
+                                    : item.saleStatus === 'reserved'
+                                      ? 'border-[#f4d47d] bg-[#6d451f] text-[#fff3c7]'
+                                      : 'border-white/30 bg-white/10 text-[#d0e6da]'
+                                }`}
+                              >
+                                {item.saleStatus === 'for_sale'
+                                  ? item.priceLabel
+                                    ? `EN VENTA · ${item.priceLabel}`
+                                    : 'EN VENTA'
                                   : item.saleStatus === 'reserved'
-                                    ? 'border-[#f4d47d] bg-[#6d451f] text-[#fff3c7]'
-                                    : 'border-white/30 bg-white/10 text-[#d0e6da]'
-                              }`}
-                            >
-                              {item.saleStatus === 'for_sale'
-                                ? item.priceLabel
-                                  ? `EN VENTA · ${item.priceLabel}`
-                                  : 'EN VENTA'
-                                : item.saleStatus === 'reserved'
-                                  ? 'RESERVADA'
-                                  : 'VENDIDA'}
+                                    ? 'RESERVADA'
+                                    : 'VENDIDA'}
+                              </span>
+                            )}
+                          </div>
+                          <small className="block truncate text-xs text-[#a8c8bc]">
+                            {item.subtitle || item.kind}
+                            {item.curatedFrom
+                              ? ` · de «${item.curatedFrom.sourceMuseumTitle}»`
+                              : isCloud
+                                ? ' · en la nube'
+                                : item.custom
+                                  ? ' · añadida por ti'
+                                  : ' · colección original'}
+                          </small>
+                        </div>
+                        <div className="flex shrink-0 gap-2">
+                          {canModifyPiece ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => openPieceForm(view.islandId, view.roomId, item.id)}
+                                className="border border-[#6e9a91] bg-[#174653] px-3 py-1.5 text-xs text-[#eff4dd] hover:bg-[#246975]"
+                              >
+                                Editar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRemovePiece(view.islandId, view.roomId, item)}
+                                className="border border-[#bd7967] bg-[#533b3a] px-3 py-1.5 text-xs text-[#ffd5c7] hover:bg-[#6a4846]"
+                              >
+                                {isCloud || item.custom ? 'Eliminar' : 'Ocultar'}
+                              </button>
+                            </>
+                          ) : (
+                            <span className="border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] text-[#9fc4b8]">
+                              Del anfitrión
                             </span>
                           )}
                         </div>
-                        <small className="block truncate text-xs text-[#a8c8bc]">
-                          {item.subtitle || item.kind}
-                          {item.curatedFrom
-                            ? ` · de «${item.curatedFrom.sourceMuseumTitle}»`
-                            : isCloud
-                              ? ' · en la nube'
-                              : item.custom
-                                ? ' · añadida por ti'
-                                : ' · colección original'}
-                        </small>
                       </div>
-                      <div className="flex shrink-0 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => openPieceForm(view.islandId, view.roomId, item.id)}
-                          className="border border-[#6e9a91] bg-[#174653] px-3 py-1.5 text-xs text-[#eff4dd] hover:bg-[#246975]"
-                        >
-                          Editar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleRemovePiece(view.islandId, view.roomId, item)}
-                          className="border border-[#bd7967] bg-[#533b3a] px-3 py-1.5 text-xs text-[#ffd5c7] hover:bg-[#6a4846]"
-                        >
-                          {isCloud || item.custom ? 'Eliminar' : 'Ocultar'}
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 {source.kind === 'local' &&
@@ -2195,10 +2710,54 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
                               ? 'video/*'
                               : 'image/*,audio/*,video/*'
                       }
-                      onChange={(e) => setPieceFile(e.target.files?.[0] || null)}
-                      className="w-full border border-[#537c79] bg-[#e5e3cf] p-1.5 text-xs text-[#183b42]"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] || null;
+                        setPieceFile(file);
+                        if (file) {
+                          setPieceClearMedia(false);
+                        }
+                      }}
+                      className="w-full border border-[#537c79] bg-[#e5e3cf] p-2 text-xs text-[#183b42]"
                     />
                   </div>
+
+                  {(piecePreviewSrc || pieceFile) && (
+                    <div className="sm:col-span-2 border border-[#7fd6cc]/40 bg-[#07222d] p-3.5">
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-[#b7f2eb]">
+                          Vista previa · {piecePreviewLabel}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPieceFile(null);
+                            setPieceClearMedia(true);
+                          }}
+                          className="inline-flex min-h-[34px] items-center gap-1 border border-[#bd7967] bg-[#533b3a] px-2.5 py-1 text-xs text-[#ffd5c7] hover:bg-[#6a4846]"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          <span>Quitar archivo</span>
+                        </button>
+                      </div>
+                      {piecePreviewSrc && piecePreviewKind === 'image' && (
+                        <img
+                          src={piecePreviewSrc}
+                          alt={pieceTitle || 'Vista previa de obra'}
+                          className="max-h-52 w-auto border border-[#e1c875]/50 object-contain bg-[#041821]"
+                        />
+                      )}
+                      {piecePreviewSrc && piecePreviewKind === 'audio' && (
+                        <audio controls src={piecePreviewSrc} className="w-full" />
+                      )}
+                      {piecePreviewSrc && piecePreviewKind === 'video' && (
+                        <video
+                          controls
+                          src={piecePreviewSrc}
+                          className="max-h-56 w-full border border-[#e1c875]/40 bg-black"
+                        />
+                      )}
+                    </div>
+                  )}
 
                   {(pieceType === 'link' || pieceType === 'audio' || pieceType === 'video') && (
                     <div className="sm:col-span-2">
@@ -2323,9 +2882,11 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
         <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-[#f3d889]/20 px-5 py-2.5 text-xs text-[#99b9af]">
           <span>{notice}</span>
           <span>
-            {isCloud
-              ? 'Sincronizado en Firestore con atribución entre museos.'
-              : 'Las copias de seguridad incluyen islas, salas, textos y archivos multimedia.'}
+            {esInvitado
+              ? 'Modo Invitado · Tus cambios se guardan solo en esta isla prestada.'
+              : isCloud
+                ? 'Sincronizado en Firestore con atribución entre museos.'
+                : 'Las copias de seguridad incluyen islas, salas, textos, archivos multimedia e islasPrestadas.'}
           </span>
         </footer>
 

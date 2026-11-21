@@ -149,6 +149,22 @@ export const CreateMuseumModal: React.FC<CreateMuseumModalProps> = ({
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="mt-5 space-y-6">
+            {/* Barra de onboarding en 3 minutos */}
+            <div className="grid grid-cols-3 gap-2 border border-[#e0d7a5]/25 bg-[#082330] p-2.5 text-xs">
+              <div className="border border-[#f4d47d]/35 bg-white/[0.03] px-2.5 py-1.5">
+                <span className="font-pixel block text-[8px] text-[#f4d47d]">PASO 1</span>
+                <span className="text-[#fff9e8]">Elige plantilla</span>
+              </div>
+              <div className="border border-[#e0d7a5]/20 bg-white/[0.03] px-2.5 py-1.5">
+                <span className="font-pixel block text-[8px] text-[#f4d47d]">PASO 2</span>
+                <span className="text-[#fff9e8]">Pon tu nombre</span>
+              </div>
+              <div className="border border-[#e0d7a5]/20 bg-white/[0.03] px-2.5 py-1.5">
+                <span className="font-pixel block text-[8px] text-[#f4d47d]">PASO 3</span>
+                <span className="text-[#fff9e8]">Publica y edita</span>
+              </div>
+            </div>
+
             {/* Plantillas */}
             <div>
               <h3 className="font-pixel mb-2.5 text-[9px] text-[#f4d47d]">
@@ -162,7 +178,7 @@ export const CreateMuseumModal: React.FC<CreateMuseumModalProps> = ({
                       key={tpl.id}
                       type="button"
                       onClick={() => applyTemplate(tpl)}
-                      className={`border-2 p-3 text-left transition-colors ${
+                      className={`min-h-[44px] border-2 p-3 text-left transition-colors ${
                         active
                           ? 'border-[#f4d47d] bg-[#175160]'
                           : 'border-[#e0d7a5]/25 bg-white/[0.04] hover:bg-white/[0.08]'
@@ -171,6 +187,10 @@ export const CreateMuseumModal: React.FC<CreateMuseumModalProps> = ({
                       <strong className="block text-sm font-bold text-[#fff9e8]">{tpl.name}</strong>
                       <span className="mt-1 block text-xs leading-snug text-[#c4ded2]">
                         {tpl.description}
+                      </span>
+                      <span className="mt-1.5 block text-[11px] font-semibold text-[#f4d47d] tabular-nums">
+                        Incluye {tpl.islands.length} islas · {tpl.rooms.length} salas · {tpl.pieces.length}{' '}
+                        {tpl.pieces.length === 1 ? 'pieza inicial' : 'piezas iniciales'}
                       </span>
                     </button>
                   );

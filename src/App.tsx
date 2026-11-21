@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import {
   BookOpen,
@@ -11,10 +11,12 @@ import {
   Map as MapIcon,
   Pencil,
   Plus,
+  Sparkles,
   User as UserIcon,
   Volume2,
   VolumeX,
 } from 'lucide-react';
+import { AboutGuideModal } from './components/AboutGuideModal';
 import { Archipelago3D } from './components/Archipelago3D';
 import { ArchipelagoMap } from './components/ArchipelagoMap';
 import { CharacterSelectorModal } from './components/CharacterSelectorModal';
@@ -22,6 +24,7 @@ import { ContentModal, ModalPayload } from './components/ContentModal';
 import { CreateMuseumModal } from './components/CreateMuseumModal';
 import { GuestbookModal } from './components/GuestbookModal';
 import { IslandDrawer } from './components/IslandDrawer';
+import { LoanInviteModal } from './components/LoanInviteModal';
 import { MuseumDirectoryModal } from './components/MuseumDirectoryModal';
 import { EditorSource, MuseumEditor } from './components/MuseumEditor';
 import { RoomExplorer2D } from './components/RoomExplorer2D';
@@ -32,7 +35,9 @@ import { FOUNTAIN_QUOTES } from './data/initialContent';
 import { CATEGORY_META, DEFAULT_MUSEUM_THEME } from './data/themes';
 import { auth } from './firebase/client';
 import {
+  fetchAcceptedLoansForMuseum,
   fetchFlagshipCloudConfig,
+  inviteToLoanedMeta,
   isFlagshipAdminUser,
   saveFlagshipCloudConfig,
 } from './firebase/interactions';
@@ -60,6 +65,7 @@ import {
   CloudMuseum,
   FlagshipConfig,
   Island,
+  IslandInvite,
   MuseumPiece,
   MuseumState,
   MuseumThemeConfig,
@@ -137,6 +143,7 @@ export default function App() {
   const [directoryError, setDirectoryError] = useState<string | null>(null);
 
   const [activeMuseum, setActiveMuseum] = useState<ActiveMuseum>({ kind: 'flagship' });
+  const [activeMuseumLoans, setActiveMuseumLoans] = useState<IslandInvite[]>([]);
   const [cloudDiscoveredIds, setCloudDiscoveredIds] = useState<string[]>([]);
   const [characterId, setCharacterId] = useState<CharacterId>(() => loadInitialCharacter());
 
@@ -160,17 +167,29 @@ export default function App() {
     scopeLabel: string;
   } | null>(null);
   const [supportModalOpen, setSupportModalOpen] = useState(false);
+  const [aboutModalOpen, setAboutModalOpen] = useState(false);
+  const [inviteModalOpen, setInviteModalOpen] = useState(false);
+  const [initialInviteId, setInitialInviteId] = useState<string | null>(null);
+  const deepLinkHandledRef = useRef(false);
 
   const [bgmActive, setBgmActive] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastAction, setToastAction] = useState<{ label: string; onClick: () => void } | null>(null);
 
-  const showToast = useCallback((msg: string) => {
-    setToastMessage(msg);
-  }, []);
+  const showToast = useCallback(
+    (msg: string, action?: { label: string; onClick: () => void }) => {
+      setToastMessage(msg);
+      setToastAction(action || null);
+    },
+    []
+  );
 
   useEffect(() => {
     if (!toastMessage) return;
-    const t = window.setTimeout(() => setToastMessage(null), 3800);
+    const t = window.setTimeout(() => {
+      setToastMessage(null);
+      setToastAction(null);
+    }, 5200);
     return () => window.clearTimeout(t);
   }, [toastMessage]);
 
@@ -304,17 +323,29 @@ export default function App() {
 
   const openFlagshipMuseum = useCallback(() => {
     setActiveMuseum({ kind: 'flagship' });
+    setActiveMuseumLoans([]);
     setSelectedIslandId(null);
     setSelectedRoomId(null);
     setMode2D(null);
     setDirectoryOpen(false);
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.delete('museum');
+      window.history.replaceState(null, '', u.toString());
+    } catch {
+      // ignorar
+    }
   }, []);
 
   const openCloudMuseum = useCallback(
     async (museum: CloudMuseum) => {
       try {
-        const pieces = await fetchMuseumPieces(museum.id, museum.ownerId);
+        const [pieces, loans] = await Promise.all([
+          fetchMuseumPieces(museum.id, museum.ownerId, museum.isPublic),
+          fetchAcceptedLoansForMuseum(museum.id).catch(() => [] as IslandInvite[]),
+        ]);
         setActiveMuseum({ kind: 'cloud', museum, pieces });
+        setActiveMuseumLoans(loans);
         setCloudDiscoveredIds([]);
         setSelectedIslandId(null);
         setSelectedRoomId(null);
@@ -323,6 +354,13 @@ export default function App() {
         const userAlreadyPicked = localStorage.getItem(CHAR_PICKED_KEY) === '1';
         if (!userAlreadyPicked && museum.defaultCharacterId) {
           setCharacterId(museum.defaultCharacterId);
+        }
+        try {
+          const u = new URL(window.location.href);
+          u.searchParams.set('museum', museum.id);
+          window.history.replaceState(null, '', u.toString());
+        } catch {
+          // ignorar
         }
         showToast(`Entraste a «${museum.title}»`);
       } catch (err) {
@@ -352,15 +390,56 @@ export default function App() {
     [openCloudMuseum, openFlagshipMuseum, showToast]
   );
 
+  useEffect(() => {
+    if (deepLinkHandledRef.current) return;
+    deepLinkHandledRef.current = true;
+    const params = new URLSearchParams(window.location.search);
+    const inviteParam = params.get('invite')?.trim();
+    const museumParam = params.get('museum')?.trim();
+    if (inviteParam) {
+      setInitialInviteId(inviteParam);
+      setInviteModalOpen(true);
+    }
+    if (museumParam && museumParam !== 'museo404' && museumParam !== 'flagship') {
+      openMuseumById(museumParam);
+    }
+  }, [openMuseumById]);
+
+  const handleOpenOriginMuseum = useCallback(
+    (url: string, sourceMuseumId?: string) => {
+      if (sourceMuseumId) {
+        openMuseumById(sourceMuseumId);
+        return;
+      }
+      const match = url.match(/[?&]museum=([a-zA-Z0-9_-]+)/);
+      if (match && match[1]) {
+        openMuseumById(match[1]);
+      }
+    },
+    [openMuseumById]
+  );
+
   const activeTheme: MuseumThemeConfig =
     activeMuseum.kind === 'cloud' ? activeMuseum.museum.theme : flagshipTheme;
 
   const islands: Island[] = useMemo(() => {
     if (activeMuseum.kind === 'cloud') {
-      return activeMuseum.museum.islands;
+      if (activeMuseumLoans.length === 0) {
+        return activeMuseum.museum.islands;
+      }
+      const loanByIsland = new Map<string, IslandInvite>();
+      for (const loan of activeMuseumLoans) {
+        if (!loanByIsland.has(loan.islandId)) {
+          loanByIsland.set(loan.islandId, loan);
+        }
+      }
+      return activeMuseum.museum.islands.map((isl) => {
+        const inv = loanByIsland.get(isl.id);
+        return inv ? { ...isl, loaned: inviteToLoanedMeta(inv) } : isl;
+      });
     }
     return getResolvedIslands(museumState, false);
-  }, [activeMuseum, museumState]);
+  }, [activeMuseum, activeMuseumLoans, museumState]);
 
   const getActiveRoomsForIsland = useCallback(
     (islandId: string): Room[] => {
@@ -553,7 +632,9 @@ export default function App() {
       characterModalOpen ||
       shareTargetPiece ||
       guestbookContext ||
-      supportModalOpen
+      supportModalOpen ||
+      aboutModalOpen ||
+      inviteModalOpen
   );
 
   useEffect(() => {
@@ -592,6 +673,14 @@ export default function App() {
   const isFlagshipAdmin = isFlagshipAdminUser(authUser);
   const isOwnerOfActiveCloud =
     activeMuseum.kind === 'cloud' && authUser?.uid === activeMuseum.museum.ownerId;
+  const activeGuestLoan = useMemo(() => {
+    if (activeMuseum.kind !== 'cloud' || !authUser || isOwnerOfActiveCloud) return null;
+    return (
+      activeMuseumLoans.find(
+        (l) => l.status === 'accepted' && l.guestUid === authUser.uid
+      ) || null
+    );
+  }, [activeMuseum.kind, authUser, isOwnerOfActiveCloud, activeMuseumLoans]);
   const canEditActiveMuseum = activeMuseum.kind === 'flagship' || isOwnerOfActiveCloud;
   const canModerateActiveGuestbook =
     activeMuseum.kind === 'flagship' ? isFlagshipAdmin : isOwnerOfActiveCloud;
@@ -607,6 +696,34 @@ export default function App() {
     activeMuseum.kind === 'cloud' ? activeMuseum.museum.ownerId : 'museo404';
 
   const currentCharProfile = getCharacterProfile(characterId);
+
+  const openGuestEditorForLoan = () => {
+    if (activeMuseum.kind !== 'cloud' || !activeGuestLoan) return;
+    setSelectedIslandId(null);
+    setEditorInitialViewMode(undefined);
+    setEditorSource({
+      kind: 'cloud',
+      museum: activeMuseum.museum,
+      pieces: activeMuseum.pieces,
+      authUser,
+      guestAccess: {
+        inviteId: activeGuestLoan.id,
+        allowedIslandId: activeGuestLoan.islandId,
+        museumTitle: activeGuestLoan.museumTitle,
+      },
+      onSyncMuseum: (nextMuseum, nextPieces) => {
+        setActiveMuseum({ kind: 'cloud', museum: nextMuseum, pieces: nextPieces });
+        setEditorSource((prev) =>
+          prev && prev.kind === 'cloud'
+            ? { ...prev, museum: nextMuseum, pieces: nextPieces }
+            : prev
+        );
+      },
+      onDeletedMuseum: () => {
+        setEditorSource(null);
+      },
+    });
+  };
 
   const openEditorForCurrentMuseum = (initialView?: 'appearance' | 'inquiries') => {
     setSelectedIslandId(null);
@@ -731,22 +848,11 @@ export default function App() {
 
           <button
             type="button"
-            onClick={() =>
-              setModalPayload({
-                kind: 'dialogue',
-                title: 'MUSEO 404 siNOMBRE · Red de Creadores',
-                subtitle: 'Archipiélago de ideas',
-                lines: [
-                  'Cada museo es un archipiélago interactivo: puede ser una galería de arte, un club de recomendaciones musicales, la carta viva de un restaurante o un archivo personal.',
-                  'En «Museos» puedes visitar las islas creadas por otras personas o lanzar tu propio museo con tus colores y personaje favorito.',
-                  'Cuando encuentres una obra, disco o platillo que te encante en cualquier museo, haz clic en «Compartir en mi museo» para exhibirlo en una de tus salas citando al autor original.',
-                ],
-              })
-            }
-            className="font-pixel inline-flex items-center gap-1.5 border-2 border-white/65 bg-[#053143]/80 px-3 py-2.5 text-[9px] text-[#fff9e6] shadow-[0_4px_0_rgba(3,35,48,0.36)] transition-transform hover:-translate-y-0.5 hover:bg-[#084d5b] whitespace-nowrap"
+            onClick={() => setAboutModalOpen(true)}
+            className="font-pixel inline-flex items-center gap-1.5 border-2 border-[#f2d17b]/80 bg-[#053143]/85 px-3 py-2.5 text-[9px] text-[#fff9e6] shadow-[0_4px_0_rgba(3,35,48,0.36)] transition-transform hover:-translate-y-0.5 hover:bg-[#084d5b] whitespace-nowrap"
           >
-            <HelpCircle className="h-3.5 w-3.5" />
-            <span className="hidden xl:inline">AYUDA</span>
+            <HelpCircle className="h-3.5 w-3.5 text-[#f4d47d]" />
+            <span className="hidden md:inline">MANIFIESTO</span>
           </button>
 
           <button
@@ -781,6 +887,15 @@ export default function App() {
             >
               <Pencil className="h-3.5 w-3.5 text-[#f4d47d]" />
               <span>EDITAR MUSEO</span>
+            </button>
+          ) : activeGuestLoan ? (
+            <button
+              type="button"
+              onClick={openGuestEditorForLoan}
+              className="font-pixel inline-flex items-center gap-1.5 border-2 border-[#7fd6cc] bg-[#145869]/95 px-3 py-2.5 text-[9px] text-[#fff9e6] shadow-[0_4px_0_rgba(3,35,48,0.36)] transition-transform hover:-translate-y-0.5 hover:bg-[#1c7388] whitespace-nowrap"
+            >
+              <Sparkles className="h-3.5 w-3.5 text-[#f4d47d]" />
+              <span>EDITAR ISLA PRESTADA</span>
             </button>
           ) : (
             <button
@@ -857,6 +972,7 @@ export default function App() {
           theme={activeTheme}
           controlsPaused={anyOverlayOpen}
           onSelectIsland={handleSelectIsland}
+          onOpenOriginMuseum={handleOpenOriginMuseum}
         />
       )}
 
@@ -881,6 +997,7 @@ export default function App() {
             setSelectedIslandId(null);
             setMode2D({ islandId, roomId });
           }}
+          onOpenOriginMuseum={handleOpenOriginMuseum}
           onClose={() => {
             setSelectedIslandId(null);
             setSelectedRoomId(null);
@@ -909,7 +1026,9 @@ export default function App() {
               shareTargetPiece ||
               characterModalOpen ||
               guestbookContext ||
-              supportModalOpen
+              supportModalOpen ||
+              aboutModalOpen ||
+              inviteModalOpen
           )}
           onOpenPiece={handleOpenPiece}
           onOpenSign={(title, content) =>
@@ -922,6 +1041,7 @@ export default function App() {
               scopeLabel: `${isl.title} · ${room.name}`,
             })
           }
+          onOpenOriginMuseum={handleOpenOriginMuseum}
           onExitToArchipelago={() => setMode2D(null)}
         />
       )}
@@ -938,12 +1058,17 @@ export default function App() {
         onRefresh={() => refreshDirectory()}
         onOpenFlagship={openFlagshipMuseum}
         onOpenCloudMuseum={openCloudMuseum}
+        onOpenMuseumById={openMuseumById}
         onOpenEditorForMuseum={async (museum) => {
           try {
-            const pieces = await fetchMuseumPieces(museum.id, museum.ownerId);
+            const [pieces, loans] = await Promise.all([
+              fetchMuseumPieces(museum.id, museum.ownerId, museum.isPublic),
+              fetchAcceptedLoansForMuseum(museum.id).catch(() => [] as IslandInvite[]),
+            ]);
             setDirectoryOpen(false);
             setEditorInitialViewMode(undefined);
             setActiveMuseum({ kind: 'cloud', museum, pieces });
+            setActiveMuseumLoans(loans);
             setEditorSource({
               kind: 'cloud',
               museum,
@@ -977,6 +1102,20 @@ export default function App() {
           setDirectoryOpen(false);
           setCreateMuseumOpen(true);
         }}
+        onOpenInviteModal={() => {
+          setInitialInviteId(null);
+          setInviteModalOpen(true);
+        }}
+        onOpenGuide={() => setAboutModalOpen(true)}
+        onCopyMuseumLink={async (museum) => {
+          const shareUrl = `${window.location.origin}${window.location.pathname}?museum=${encodeURIComponent(museum.id)}`;
+          try {
+            await navigator.clipboard?.writeText(shareUrl);
+            showToast(`Enlace directo de «${museum.title}» copiado.`);
+          } catch {
+            showToast(`Enlace: ?museum=${museum.id}`);
+          }
+        }}
         onSignIn={handleSignIn}
         onClose={() => setDirectoryOpen(false)}
       />
@@ -990,12 +1129,43 @@ export default function App() {
           setCreateMuseumOpen(false);
           setMyMuseums((prev) => [museum, ...prev]);
           setActiveMuseum({ kind: 'cloud', museum, pieces });
+          setActiveMuseumLoans([]);
           setCloudDiscoveredIds([]);
           setSelectedIslandId(null);
           setSelectedRoomId(null);
           setMode2D(null);
           refreshDirectory();
-          showToast(`¡Museo «${museum.title}» creado!`);
+          showToast(`¡Museo «${museum.title}» creado!`, {
+            label: 'ABRIR TALLER',
+            onClick: () => {
+              setEditorInitialViewMode(undefined);
+              setEditorSource({
+                kind: 'cloud',
+                museum,
+                pieces,
+                authUser,
+                onSyncMuseum: (nextMuseum, nextPieces) => {
+                  setActiveMuseum({ kind: 'cloud', museum: nextMuseum, pieces: nextPieces });
+                  setEditorSource((prev) =>
+                    prev && prev.kind === 'cloud'
+                      ? { ...prev, museum: nextMuseum, pieces: nextPieces }
+                      : prev
+                  );
+                  setMyMuseums((prev) =>
+                    prev.map((m) => (m.id === nextMuseum.id ? nextMuseum : m))
+                  );
+                  refreshDirectory();
+                },
+                onDeletedMuseum: (deletedId) => {
+                  setEditorSource(null);
+                  setMyMuseums((prev) => prev.filter((m) => m.id !== deletedId));
+                  openFlagshipMuseum();
+                  refreshDirectory();
+                  showToast('Museo eliminado.');
+                },
+              });
+            },
+          });
         }}
         onClose={() => setCreateMuseumOpen(false)}
       />
@@ -1071,7 +1241,51 @@ export default function App() {
           activeMuseum.kind === 'flagship' ? isFlagshipAdmin : isOwnerOfActiveCloud
         }
         onOpenEditorAppearance={() => openEditorForCurrentMuseum('appearance')}
+        onOpenGuide={() => setAboutModalOpen(true)}
         onClose={() => setSupportModalOpen(false)}
+      />
+
+      {/* Acerca de y Guía de Uso */}
+      <AboutGuideModal
+        isOpen={aboutModalOpen}
+        canEditActiveMuseum={canEditActiveMuseum}
+        onOpenDirectory={() => {
+          refreshDirectory();
+          setDirectoryOpen(true);
+        }}
+        onOpenInviteModal={() => {
+          setInitialInviteId(null);
+          setInviteModalOpen(true);
+        }}
+        onOpenEditor={() => openEditorForCurrentMuseum()}
+        onOpenCreateMuseum={() => setCreateMuseumOpen(true)}
+        onOpenSupport={() => setSupportModalOpen(true)}
+        onClose={() => setAboutModalOpen(false)}
+      />
+
+      {/* Invitaciones a Islas Prestadas */}
+      <LoanInviteModal
+        isOpen={inviteModalOpen}
+        initialInviteId={initialInviteId}
+        authUser={authUser}
+        myMuseums={myMuseums}
+        onSignIn={handleSignIn}
+        onAccepted={(acceptedInvite) => {
+          if (
+            activeMuseum.kind === 'cloud' &&
+            activeMuseum.museum.id === acceptedInvite.museumId
+          ) {
+            setActiveMuseumLoans((prev) => [
+              acceptedInvite,
+              ...prev.filter((l) => l.id !== acceptedInvite.id),
+            ]);
+          }
+          showToast(
+            `¡Isla prestada aceptada! Ya puedes editar tus piezas en «${acceptedInvite.islandTitle}».`
+          );
+        }}
+        onOpenMuseumById={openMuseumById}
+        onClose={() => setInviteModalOpen(false)}
       />
 
       {/* Editor del Museo (Local o en la Nube) */}
@@ -1103,9 +1317,23 @@ export default function App() {
       {toastMessage && (
         <div
           role="status"
-          className="pointer-events-none fixed bottom-4 left-1/2 z-50 -translate-x-1/2 border-2 border-[#e1c875] bg-[#072634] px-4 py-2 text-xs font-semibold text-[#fff9e6] shadow-xl"
+          className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 border-2 border-[#e1c875] bg-[#072634] px-4 py-2 text-xs font-semibold text-[#fff9e6] shadow-xl"
         >
-          {toastMessage}
+          <span>{toastMessage}</span>
+          {toastAction && (
+            <button
+              type="button"
+              onClick={() => {
+                const act = toastAction;
+                setToastMessage(null);
+                setToastAction(null);
+                act.onClick();
+              }}
+              className="font-pixel border border-[#f2d17b] bg-[#bd7544] px-2.5 py-1 text-[8px] text-[#fff9e8] hover:bg-[#a24d2e] whitespace-nowrap"
+            >
+              {toastAction.label}
+            </button>
+          )}
         </div>
       )}
     </main>
