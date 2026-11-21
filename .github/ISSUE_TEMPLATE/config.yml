@@ -1,8 +1,11 @@
 blank_issues_enabled: true
 contact_links:
+  - name: Ideas, diseño y curaduría (Discussions)
+    url: https://github.com/sarvideleonardo-blip/museo/discussions
+    about: Conversa una idea antes de convertirla en issue.
   - name: Guía para contribuir (CONTRIBUTING.md)
-    url: https://github.com/ORG/REPO/blob/main/CONTRIBUTING.md
+    url: https://github.com/sarvideleonardo-blip/museo/blob/main/CONTRIBUTING.md
     about: Revisa los principios del proyecto y cómo enviar tu primer Pull Request.
   - name: Acuerdos de convivencia (CODE_OF_CONDUCT.md)
-    url: https://github.com/ORG/REPO/blob/main/CODE_OF_CONDUCT.md
+    url: https://github.com/sarvideleonardo-blip/museo/blob/main/CODE_OF_CONDUCT.md
     about: Lee nuestras normas de cuidado mutuo antes de abrir un debate.
