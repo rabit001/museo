@@ -44,8 +44,10 @@
 
 ### 2. Instalación
 ```bash
-npm install
+npm install --legacy-peer-deps
 ```
+
+> `npm install` sin flags puede fallar por un conflicto de versiones de `esbuild` entre Vite 8 y `tsx`. El conflicto es de dependencias de desarrollo y no afecta al código de la aplicación. Si usas Bun, `bun install` también funciona con el `bun.lock` incluido.
 
 ### 3. Variables de entorno
 Si conectas un proyecto Firebase propio o integraciones adicionales, revisa `.env.example` (nunca subas credenciales privadas al repositorio). La configuración pública web de Firebase vive en `firebase-applet-config.json`.
