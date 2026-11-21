@@ -126,7 +126,7 @@ Consulta:
 Queremos que la comunidad tenga voz en el rumbo del proyecto y que nadie concentre decisiones unilaterales sobre quién existe en el archipiélago:
 - **Propuestas técnicas, bugs e ideas**: abre un Issue usando las plantillas de `.github/ISSUE_TEMPLATE/`.
 - **Debates de diseño, curaduría y gobernanza**: usa **GitHub Discussions** (categorías recomendadas: *Ideas de Islas*, *Curaduría*, *Diseño y Pixel Art*, *Ayuda*).
-- **Conversación en tiempo real**: configura aquí el enlace de Discord / Matrix / chat comunitario oficial cuando publiques el repositorio en GitHub.
+- **Conversación y propuestas**: usa [GitHub Discussions](https://github.com/sarvideleonardo-blip/museo/discussions) para ideas, curaduría, diseño y ayuda. Un chat en tiempo real se añadirá cuando haya una comunidad activa que lo necesite.
 
 ---
 
