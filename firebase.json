@@ -1,0 +1,7 @@
+{
+  "firestore": {
+    "database": "ai-studio-museo404sinombre-5d1681bc-f5e8-464e-b565-ce6e682d370a",
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  }
+}
