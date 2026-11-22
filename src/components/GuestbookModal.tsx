@@ -84,6 +84,9 @@ export const GuestbookModal: React.FC<GuestbookModalProps> = ({
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [cooldownSeconds, setCooldownSeconds] = useState(() => getCooldownSeconds(museumId));
+  const [cooldownUntil, setCooldownUntil] = useState(
+    () => Date.now() + getCooldownSeconds(museumId) * 1000
+  );
   const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -126,11 +129,18 @@ export const GuestbookModal: React.FC<GuestbookModalProps> = ({
 
   useEffect(() => {
     if (!isOpen) return;
-    const refreshCooldown = () => setCooldownSeconds(getCooldownSeconds(museumId));
+    setCooldownUntil(Date.now() + getCooldownSeconds(museumId) * 1000);
+  }, [isOpen, museumId]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const refreshCooldown = () => {
+      setCooldownSeconds(Math.max(0, Math.ceil((cooldownUntil - Date.now()) / 1000)));
+    };
     refreshCooldown();
     const intervalId = window.setInterval(refreshCooldown, 250);
     return () => window.clearInterval(intervalId);
-  }, [isOpen, museumId]);
+  }, [isOpen, cooldownUntil]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -188,6 +198,8 @@ export const GuestbookModal: React.FC<GuestbookModalProps> = ({
       } catch {
         // El cooldown sigue activo en este montaje aunque sessionStorage no esté disponible.
       }
+      const nextCooldownUntil = Date.now() + COOLDOWN_MS;
+      setCooldownUntil(nextCooldownUntil);
       setCooldownSeconds(Math.ceil(COOLDOWN_MS / 1000));
       setMessage('');
       setEntries((prev) => [created, ...prev]);
