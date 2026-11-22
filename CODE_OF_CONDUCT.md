@@ -1,5 +1,7 @@
 # Código de Conducta · MUSEO 404 · siNOMBRE
 
+🇬🇧 [English version](CODE_OF_CONDUCT.en.md)
+
 ## Nuestro compromiso
 
 **MUSEO 404 · siNOMBRE** existe para prestarnos espacios, descubrirnos y ayudarnos a existir sin competir por atención.
