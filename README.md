@@ -1,5 +1,7 @@
 # MUSEO 404 · siNOMBRE
 
+🇬🇧 [English version](README.en.md)
+
 > **Tu museo. Tus reglas. Nuestra comunidad.**
 >
 > *Un archipiélago digital libre donde cada persona puede construir su propio museo, explorar el de otros y prestarse islas para ayudarse a existir.*
