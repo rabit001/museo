@@ -24,7 +24,7 @@ let testEnv: RulesTestEnvironment;
 test.before(async () => {
   const rules = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf8');
   testEnv = await initializeTestEnvironment({
-    projectId: 'museo-404-guestbook-test',
+    projectId: 'museo-404-rules-test',
     firestore: { rules },
   });
 });
