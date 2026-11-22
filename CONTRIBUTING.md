@@ -1,5 +1,7 @@
 # Contribuir a MUSEO 404 · siNOMBRE
 
+🇬🇧 [English version](CONTRIBUTING.en.md)
+
 Gracias por querer aportar.
 
 Este proyecto es una infraestructura abierta: un archipiélago digital donde cualquiera puede construir, publicar y conectar museos.
