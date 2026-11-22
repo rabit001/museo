@@ -1,5 +1,7 @@
 # Issues iniciales sugeridos para el lanzamiento público
 
+🇬🇧 [English version](ISSUES_INICIALES.en.md)
+
 Este catálogo contiene **8 issues claros y accionables** listos para crearse al abrir el repositorio público en GitHub, de modo que cualquier colaborador sepa exactamente por dónde empezar.
 
 > **Etiquetas recomendadas en GitHub**:
