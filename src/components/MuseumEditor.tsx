@@ -25,9 +25,9 @@ import { CHARACTER_PROFILES } from '../data/characters';
 import { BIOME_LABELS, ORIGINAL_ISLANDS, getBasePiecesForIsland } from '../data/initialContent';
 import { CATEGORY_META, DEFAULT_MUSEUM_THEME, MUSEUM_THEME_PRESETS } from '../data/themes';
 import {
+  evaluateInviteExpiration,
   formatElapsedTime,
   formatReadableDate,
-  getSuggestedExpiration,
 } from '../utils/inviteHelpers';
 import {
   createIslandInvite,
@@ -2320,7 +2320,7 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
                                 <div className="space-y-2">
                                   {forThisIsland.map((inv) => {
                                     const magicUrl = `${window.location.origin}${window.location.pathname}?museum=${encodeURIComponent(source.museum.id)}&invite=${encodeURIComponent(inv.id)}`;
-                                    const expiration = getSuggestedExpiration(inv.createdAt);
+                                    const evalExp = evaluateInviteExpiration(inv);
                                     const readableCreatedAt = formatReadableDate(inv.createdAt);
                                     const elapsed = formatElapsedTime(inv.createdAt);
 
@@ -2448,13 +2448,26 @@ export const MuseumEditor: React.FC<MuseumEditorProps> = ({
                                             <span>Creada: {readableCreatedAt} {elapsed && `(${elapsed})`}</span>
                                           </span>
                                           {inv.status === 'pending' && (
-                                            <span className={`inline-flex items-center gap-1 ${expiration.isExpired ? 'text-[#ffb4a2]' : 'text-[#c4ded2]'}`}>
-                                              <Clock className="h-3 w-3" />
-                                              <span>
-                                                Expiración sugerida: {expiration.expirationDateStr}
-                                                {expiration.isExpired ? ' (caducada)' : ` (${expiration.daysRemaining}d restantes)`}
-                                              </span>
-                                            </span>
+                                            <>
+                                              {evalExp.enforcedExpirationStr ? (
+                                                <span className={`inline-flex items-center gap-1 ${evalExp.isEnforcedExpired ? 'text-[#ffb4a2]' : 'text-[#c4ded2]'}`}>
+                                                  <Clock className="h-3 w-3" />
+                                                  <span>
+                                                    {evalExp.isEnforcedExpired ? 'Expirada:' : 'Vence:'} {evalExp.enforcedExpirationStr}
+                                                  </span>
+                                                </span>
+                                              ) : (
+                                                <span className="inline-flex items-center gap-1 text-[#c4ded2]">
+                                                  <Clock className="h-3 w-3" />
+                                                  <span>
+                                                    Fecha sugerida de revisión: {evalExp.suggestedReview.suggestedDateStr}
+                                                    {evalExp.suggestedReview.isPastSuggestedWindow
+                                                      ? ' (revisión sugerida cumplida)'
+                                                      : ` (${evalExp.suggestedReview.daysRemaining}d restantes)`}
+                                                  </span>
+                                                </span>
+                                              )}
+                                            </>
                                           )}
                                           {inv.status === 'accepted' && (
                                             <span className="inline-flex items-center gap-1 text-[#8ae6dc]">

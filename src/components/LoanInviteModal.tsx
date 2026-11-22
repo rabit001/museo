@@ -20,9 +20,9 @@ import {
 } from '../firebase/interactions';
 import { CloudMuseum, IslandInvite } from '../types/museum';
 import {
+  evaluateInviteExpiration,
   formatElapsedTime,
   formatReadableDate,
-  getSuggestedExpiration,
 } from '../utils/inviteHelpers';
 
 interface LoanInviteModalProps {
@@ -359,13 +359,25 @@ export const LoanInviteModal: React.FC<LoanInviteModalProps> = ({
                     <span>Creada: {formatReadableDate(invite.createdAt)} ({formatElapsedTime(invite.createdAt)})</span>
                   </span>
                   {invite.status === 'pending' && (() => {
-                    const exp = getSuggestedExpiration(invite.createdAt);
+                    const evalExp = evaluateInviteExpiration(invite);
+                    if (evalExp.enforcedExpirationStr) {
+                      return (
+                        <span className={`inline-flex items-center gap-1 ${evalExp.isEnforcedExpired ? 'text-[#ffb4a2]' : 'text-[#c4ded2]'}`}>
+                          <Clock className="h-3 w-3" />
+                          <span>
+                            {evalExp.isEnforcedExpired ? 'Expirada:' : 'Vence:'} {evalExp.enforcedExpirationStr}
+                          </span>
+                        </span>
+                      );
+                    }
                     return (
-                      <span className={`inline-flex items-center gap-1 ${exp.isExpired ? 'text-[#ffb4a2]' : 'text-[#c4ded2]'}`}>
+                      <span className="inline-flex items-center gap-1 text-[#c4ded2]">
                         <Clock className="h-3 w-3" />
                         <span>
-                          Expiración sugerida: {exp.expirationDateStr}
-                          {exp.isExpired ? ' (caducada)' : ` (${exp.daysRemaining}d restantes)`}
+                          Fecha sugerida de revisión: {evalExp.suggestedReview.suggestedDateStr}
+                          {evalExp.suggestedReview.isPastSuggestedWindow
+                            ? ' (revisión sugerida cumplida)'
+                            : ` (${evalExp.suggestedReview.daysRemaining}d restantes)`}
                         </span>
                       </span>
                     );
