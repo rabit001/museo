@@ -96,7 +96,7 @@ export const GuestbookModal: React.FC<GuestbookModalProps> = ({
     if (!nickname && authUser?.displayName) {
       setNickname(authUser.displayName.slice(0, 40));
     }
-  }, [isOpen, roomId, authUser?.displayName, nickname]);
+  }, [isOpen, roomId, authUser?.displayName]);
 
   useEffect(() => {
     if (isOpen) setShowHiddenEntries(false);
@@ -208,7 +208,9 @@ export const GuestbookModal: React.FC<GuestbookModalProps> = ({
       setCooldownUntil(nextCooldownUntil);
       setCooldownSeconds(Math.ceil(COOLDOWN_MS / 1000));
       setMessage('');
-      setEntries((prev) => [created, ...prev]);
+      if (!showHiddenEntries) {
+        setEntries((prev) => [created, ...prev]);
+      }
       retroAudio.playDiscovery();
       onToast?.('Tu firma quedó registrada en el libro de visitas.');
     } catch (err) {
