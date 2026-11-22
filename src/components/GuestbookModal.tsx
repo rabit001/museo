@@ -92,12 +92,15 @@ export const GuestbookModal: React.FC<GuestbookModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     setScopeFilter(roomId === 'reception' ? 'all' : 'room');
-    setShowHiddenEntries(false);
     setFormError(null);
     if (!nickname && authUser?.displayName) {
       setNickname(authUser.displayName.slice(0, 40));
     }
   }, [isOpen, roomId, authUser?.displayName, nickname]);
+
+  useEffect(() => {
+    if (isOpen) setShowHiddenEntries(false);
+  }, [isOpen, museumId]);
 
   const loadEntries = useCallback(async () => {
     if (!isOpen) return;
@@ -161,7 +164,10 @@ export const GuestbookModal: React.FC<GuestbookModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
-    const remainingCooldown = getCooldownSeconds(museumId);
+    const remainingCooldown = Math.max(
+      getCooldownSeconds(museumId),
+      Math.max(0, Math.ceil((cooldownUntil - Date.now()) / 1000))
+    );
     if (remainingCooldown > 0) {
       setCooldownSeconds(remainingCooldown);
       setFormError(`Espera ${remainingCooldown} segundos antes de publicar otra firma.`);
